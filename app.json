@@ -9,7 +9,6 @@
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#FFFFFF",
     "primaryColor": "#8B5CF6",
-    "privacy": "hidden",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -64,7 +63,7 @@
             "compileSdkVersion": 35,
             "targetSdkVersion": 35,
             "minSdkVersion": 24,
-            "kotlinVersion": "1.9.24",
+            "kotlinVersion": "2.0.0",
             "newArchEnabled": true,
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
