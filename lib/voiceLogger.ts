@@ -1,4 +1,6 @@
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY!;
+if (!GROQ_API_KEY) throw new Error('EXPO_PUBLIC_GROQ_API_KEY is not configured');
+
 const WHISPER_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 
 /**

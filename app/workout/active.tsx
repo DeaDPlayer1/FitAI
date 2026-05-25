@@ -32,9 +32,9 @@ export default function ActiveWorkoutScreen() {
   const initSession = async () => {
     setLoading(true);
     try {
-      console.log('Starting session for template:', templateId);
+      if (__DEV__) console.log('Starting session for template:', templateId);
       const data = await WorkoutService.initializeSessionFromTemplate(user?.id || '', templateId as string);
-      console.log('Session initialized:', data.session.id);
+      if (__DEV__) console.log('Session initialized:', data.session.id);
       
       if (!data.exercises || data.exercises.length === 0) {
         throw new Error('This template has no exercises. Please add some in the builder first.');

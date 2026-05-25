@@ -243,6 +243,14 @@ export const COLORS = {
   green: palette.success,
   blue: palette.info,
   red: palette.danger,
+  // Production-critical missing aliases used by components
+  mint: palette.success,
+  teal: '#14B8A6',
+  bgCard: colors.bg.card,
+  bgElevated: colors.bg.elevated,
+  textPrimary: colors.text.primary,
+  borderMid: colors.border.medium,
+  bgInput: colors.bg.elevated,
 };
 
 export const BACKGROUND = {

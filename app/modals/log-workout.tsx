@@ -76,7 +76,7 @@ export default function LogWorkoutModal() {
         .select()
         .single();
 
-      console.log('[log-workout] insert raw result:', { data, error }); // FIX[1]: log success/error
+      if (__DEV__) console.log('[log-workout] insert raw result:', { data, error });
       if (error) throw error;
 
       addWorkoutLog({

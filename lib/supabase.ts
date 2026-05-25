@@ -3,7 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+if (!supabaseUrl) throw new Error('EXPO_PUBLIC_SUPABASE_URL is not configured');
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+if (!supabaseAnonKey) throw new Error('EXPO_PUBLIC_SUPABASE_ANON_KEY is not configured');
 
 // Custom storage wrapper to handle potential native module issues
 const ExpoStorage = {

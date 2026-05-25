@@ -1,5 +1,7 @@
 const CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME!;
+if (!CLOUD_NAME) throw new Error('EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME is not configured');
 const UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
+if (!UPLOAD_PRESET) throw new Error('EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET is not configured');
 
 /**
  * Upload an image to Cloudinary and return the secure URL.

@@ -39,7 +39,7 @@ export default function LogWeightModal() {
         .select('id, user_id, weight_kg, logged_at')
         .single();
 
-      console.log('[log-weight] insert raw result:', { data, error }); // FIX[1]: log success/error
+      if (__DEV__) console.log('[log-weight] insert raw result:', { data, error });
       if (error) throw error;
       Alert.alert('✅ Logged!', `Weight: ${weight} kg`);
       router.back();

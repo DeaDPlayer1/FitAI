@@ -231,5 +231,5 @@ export async function updateUserProfile(
     throw new Error(error.message);
   }
 
-  console.log('[updateUserProfile] upsert ok:', data);
+  if (__DEV__) console.log('[updateUserProfile] upsert ok:', data);
 }

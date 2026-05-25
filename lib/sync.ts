@@ -73,7 +73,7 @@ export async function syncUserData(userId: string) {
     if (mealsError) {
       console.error('[syncUserData] meal_logs select error:', mealsError);
     } else {
-      console.log('[syncUserData] meal_logs raw rows:', meals);
+      if (__DEV__) console.log('[syncUserData] meal_logs raw rows:', meals);
     }
 
     if (meals) {
@@ -119,7 +119,7 @@ export async function syncUserData(userId: string) {
       useWorkoutStore.getState().setWorkoutLogs(workouts as any);
     }
 
-    console.log('Sync complete for user:', userId);
+    if (__DEV__) console.log('Sync complete for user:', userId);
   } catch (error) {
     console.error('Sync Error:', error);
   }

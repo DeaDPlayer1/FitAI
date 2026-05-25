@@ -14,18 +14,6 @@ import {
   Inter_600SemiBold,
   Inter_700Bold 
 } from '@expo-google-fonts/inter';
-import { 
-  Oswald_400Regular,
-  Oswald_500Medium,
-  Oswald_600SemiBold,
-  Oswald_700Bold 
-} from '@expo-google-fonts/oswald';
-import { 
-  Montserrat_400Regular,
-  Montserrat_700Bold,
-  Montserrat_800ExtraBold,
-  Montserrat_900Black 
-} from '@expo-google-fonts/montserrat';
 
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserProfile, defaultHealthProfile } from '@/lib/auth';
@@ -68,14 +56,6 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
-    Oswald_400Regular,
-    Oswald_500Medium,
-    Oswald_600SemiBold,
-    Oswald_700Bold,
-    Montserrat_400Regular,
-    Montserrat_700Bold,
-    Montserrat_800ExtraBold,
-    Montserrat_900Black,
   });
 
   // Listen to Supabase auth state changes
