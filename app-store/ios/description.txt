@@ -1,0 +1,17 @@
+FitAI - Pulse AI Coach
+
+Your AI-powered fitness and nutrition companion.
+
+Train smarter, eat better, and achieve your fitness goals with the world's most intelligent AI fitness coach.
+
+Pulse AI combines the knowledge of world-class coaches with advanced AI to deliver personalized coaching that adapts to your body, goals, and health conditions.
+
+Features:
+• AI Personal Trainer with customized workout plans
+• Smart nutrition tracking with AI analysis
+• Weekly training split builder
+• Health-aware coaching that adapts to conditions
+• Real-time workout tracking
+• Consistency streaks and progress analytics
+
+Privacy-first design. Your health data stays private and secure.

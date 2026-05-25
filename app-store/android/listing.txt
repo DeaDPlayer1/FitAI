@@ -1,0 +1,21 @@
+FitAI - Pulse AI Coach
+
+Your AI-powered fitness and nutrition companion.
+
+Train smarter, eat better, and achieve your fitness goals with the world's most intelligent AI fitness coach.
+
+FEATURES:
+
+• AI PERSONAL TRAINER: Get customized workout plans based on your goals, experience level, and health conditions
+• SMART NUTRITION TRACKING: Log meals with AI-powered nutritional analysis
+• WEEKLY SPLIT BUILDER: Design your perfect training split with drag-and-drop simplicity
+• HEALTH-AWARE COACHING: Pulse AI adapts to your health conditions for safe, effective training
+• REAL-TIME WORKOUT TRACKING: Track sets, reps, and rest times during workouts
+• CONSISTENCY TRACKING: Monitor your streak and stay motivated
+• PROGRESS ANALYTICS: Visualize your nutrition and fitness progress over time
+
+Pulse AI combines the knowledge of world-class coaches with advanced AI to deliver personalized coaching that adapts to YOU.
+
+Privacy-first: Your health data stays private and secure.
+
+Note: This app requires a Supabase backend and Groq API key for full functionality.
