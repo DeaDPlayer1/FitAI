@@ -14,7 +14,7 @@ export async function syncUserData(userId: string) {
       .from('profiles')
       .select('*')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
     // FIX[1]: Never allow silent failures in sync (log the root cause).
     if (profileError) {

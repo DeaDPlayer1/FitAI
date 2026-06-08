@@ -319,7 +319,7 @@ export default function RootLayout() {
 
     if (isAuthenticated && user?.onboarding_complete) {
       const mode = user.app_mode || 'normal';
-      const targetGroup: any = mode === 'ai_trainer' ? '/(ai-trainer)' : '/(tabs)';
+      const targetGroup: any = mode === 'ai_trainer' ? '/(ai-trainer)' : '/(tabs)/food';
       // Already on the correct group — no-op
       if (inTabs && rootSegment === (mode === 'ai_trainer' ? '(ai-trainer)' : '(tabs)')) {
         return;

@@ -421,7 +421,6 @@ export default function HomeScreen() {
           primaryAction={navToWorkout}
           secondaryActions={[
             { icon: 'plus-circle', label: 'Log Meal', variant: 'warning' as const, onPress: navToAddMeal },
-            { icon: 'message-circle', label: 'Ask Coach', variant: 'purple' as const, onPress: navToCoach },
             { icon: 'droplet', label: 'Add Water', variant: 'success' as const, onPress: handleAddWater },
             { icon: 'trending-up', label: 'Log Weight', variant: 'purple' as const, onPress: navToLogWeight },
           ]}

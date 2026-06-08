@@ -1,6 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
 import { clearStoredSession } from './tokenManager';
+import { useUserStore } from '@/store/userStore';
+import { useNutritionStore } from '@/store/nutritionStore';
+import { useWorkoutStore } from '@/store/workoutStore';
+import { useSplitBuilderStore } from '@/store/splitBuilderStore';
+import { useMemoryStore } from '@/store/memoryStore';
+import { useAiTrainerStore } from '@/store/aiTrainerStore';
+import { useProfileStore } from '@/store/profileStore';
+import { useDashboardStore } from '@/store/dashboardStore';
+import { useLiveContextStore } from '@/store/liveContextStore';
+import { useOnboardingStore } from '@/store/onboardingStore';
 
 export type FitnessGoal = 'fat_loss' | 'muscle_gain' | 'recomposition' | 'strength' | 'maintenance';
 export type ExperienceLevel = 'beginner' | 'intermediate' | 'advanced';
@@ -181,6 +191,18 @@ export async function signOutUser(): Promise<void> {
   } catch (e) {
     console.warn('[signOut] SQLite clear error:', e);
   }
+  // Directly clear all Zustand stores (not reliant on onAuthStateChange listener)
+  useUserStore.getState().clearUser();
+  useNutritionStore.getState().clearToday();
+  useWorkoutStore.getState().clearChat();
+  useWorkoutStore.getState().clearWorkoutLogs();
+  useSplitBuilderStore.getState().reset();
+  useMemoryStore.getState().clearAll();
+  useAiTrainerStore.getState().clearAll();
+  useProfileStore.getState().reset();
+  useDashboardStore.getState().reset();
+  useLiveContextStore.getState().reset();
+  useOnboardingStore.getState().reset();
 }
 
 /**

@@ -69,16 +69,6 @@ export default function ProfileScreen() {
     if (user?.id) await fetchAll(user.id);
   }, [user?.id, fetchAll]);
 
-  if (!user) {
-    return (
-      <View style={{ flex: 1, backgroundColor: theme.colors.bg.primary, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
-    );
-  }
-
-  const isAiTrainer = user.app_mode === 'ai_trainer';
-
   const currentStreak = useMemo(() => {
     if (!workoutLogs?.length) return 0;
     const uniqueDays = new Set<string>();
@@ -100,6 +90,50 @@ export default function ProfileScreen() {
     }
     return streak;
   }, [workoutLogs]);
+
+  const journeyEntries = useMemo(() => milestones.map((m) => ({
+    id: m.id,
+    icon: (m.icon || 'check-circle') as React.ComponentProps<typeof Feather>['name'],
+    title: m.title,
+    subtitle: m.subtitle,
+    date: new Date(m.achieved_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    color: theme.colors.primary,
+  })), [milestones]);
+
+  const achievementItems = useMemo(() => achievements.map((a) => ({
+    id: a.id,
+    title: a.title,
+    description: a.description,
+    icon: a.icon,
+    rarity: a.rarity,
+  })), [achievements]);
+
+  const handleSignOut = useCallback(() => {
+    Alert.alert('Sign Out', 'Are you sure?', [
+      { text: 'Cancel' },
+      {
+        text: 'Sign Out', style: 'destructive',
+        onPress: async () => {
+          try {
+            await signOutUser();
+          } catch (e: any) {
+            Alert.alert('Error', e.message);
+          }
+          router.replace('/(auth)/login');
+        },
+      },
+    ]);
+  }, [router]);
+
+  if (!user) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.bg.primary, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
+
+  const isAiTrainer = user.app_mode === 'ai_trainer';
 
   const identityMetrics = [
     {
@@ -142,23 +176,6 @@ export default function ProfileScreen() {
     { icon: 'target', label: 'Goal', value: user.health_profile?.goal ? user.health_profile.goal.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Set goal', color: theme.colors.success },
   ];
 
-  const journeyEntries = useMemo(() => milestones.map((m) => ({
-    id: m.id,
-    icon: (m.icon || 'check-circle') as React.ComponentProps<typeof Feather>['name'],
-    title: m.title,
-    subtitle: m.subtitle,
-    date: new Date(m.achieved_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-    color: theme.colors.primary,
-  })), [milestones]);
-
-  const achievementItems = useMemo(() => achievements.map((a) => ({
-    id: a.id,
-    title: a.title,
-    description: a.description,
-    icon: a.icon,
-    rarity: a.rarity,
-  })), [achievements]);
-
   const latestRecovery = recoveryLogs[0];
   const recoveryMetrics: { icon: 'activity' | 'moon' | 'heart'; label: string; value: string; status: 'good' | 'moderate' | 'low' }[] = [
     { icon: 'activity', label: 'Stress', value: latestRecovery?.stress_level ? `${latestRecovery.stress_level}/10` : '—', status: (latestRecovery?.stress_level && latestRecovery.stress_level <= 4 ? 'good' : latestRecovery?.stress_level && latestRecovery.stress_level <= 7 ? 'moderate' : 'low') as 'good' | 'moderate' | 'low' },
@@ -174,16 +191,6 @@ export default function ProfileScreen() {
     { icon: 'download' as const, label: 'Export Data', subtitle: 'Download your fitness data', color: theme.colors.text.muted, onPress: () => Alert.alert('Coming Soon', 'Data export coming soon.') },
     { icon: 'help-circle' as const, label: 'Support', subtitle: 'Help, FAQ, and contact', color: theme.colors.text.muted, onPress: () => Alert.alert('Coming Soon', 'Support page coming soon.') },
   ];
-
-  const handleSignOut = useCallback(() => {
-    Alert.alert('Sign Out', 'Are you sure?', [
-      { text: 'Cancel' },
-      {
-        text: 'Sign Out', style: 'destructive',
-        onPress: async () => { try { await signOutUser(); } catch (e: any) { Alert.alert('Error', e.message); } },
-      },
-    ]);
-  }, []);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg.primary }}>
