@@ -170,11 +170,15 @@ export function estimateBaseNutrition(
   servingGrams?: number,
 ): BaseNutrition {
   const grams = servingGrams || parseServingGrams(servingDesc) || 100;
+
+  const parsedUnit = detectServingUnit(servingDesc);
+  const unit = parsedUnit || 'g';
+
   const ratio = grams / 100;
 
   return {
-    baseServingValue: grams,
-    baseServingUnit: 'g',
+    baseServingValue: unit === 'g' || unit === 'ml' ? grams : 1,
+    baseServingUnit: unit,
     baseServingLabel: servingDesc || `${grams}g`,
     calories: Math.round(per100g.calories * ratio),
     protein_g: round1(per100g.protein * ratio),
@@ -184,6 +188,22 @@ export function estimateBaseNutrition(
     sugar_g: round1(per100g.sugar * ratio),
     sodium_g: round1(per100g.sodium * ratio),
   };
+}
+
+function detectServingUnit(desc: string): ServingUnit | null {
+  if (!desc) return null;
+  const lower = desc.toLowerCase().trim();
+  if (/(\d+\.?\d*)\s*ml/i.test(lower)) return 'ml';
+  if (/(\d+\.?\d*)\s*g\b/i.test(lower)) return 'g';
+  if (/(\d+\.?\d*)\s*oz/i.test(lower)) return 'oz';
+  if (/(\d+\.?\d*)\s*fl\s*oz/i.test(lower)) return 'floz';
+  if (/\bpiece\b|\bpieces\b/i.test(lower)) return 'piece';
+  if (/\bcan\b|\bcans\b/i.test(lower)) return 'can';
+  if (/\bbottle\b|\bbottles\b/i.test(lower)) return 'bottle';
+  if (/\bcap\b/i.test(lower)) return 'scoop';
+  if (/\bcup\b/i.test(lower)) return 'cup';
+  if (/\bbowl\b/i.test(lower)) return 'bowl';
+  return null;
 }
 
 /**

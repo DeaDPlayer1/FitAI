@@ -7,7 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { theme } from '@/constants/theme';
 import { useUserStore } from '@/store/userStore';
-import { analyzeImageWithAI } from '@/lib/nutritionAI';
+import { analyzeImageWithAI, saveScanToCache } from '@/lib/nutritionAI';
 
 type UIState = 'idle' | 'capturing' | 'processing';
 
@@ -52,6 +52,7 @@ export default function CameraCaptureModal() {
       setUIState('processing');
 
       const result = await analyzeImageWithAI(uri, user?.id);
+      saveScanToCache(uri, user?.id, result.name, result.calories);
       (router as any).replace({
         pathname: '/modals/confirm-food',
         params: {
@@ -64,6 +65,7 @@ export default function CameraCaptureModal() {
           fat: String(result.fat),
           fiber: String(result.fiber),
           serving: result.serving,
+          servingGrams: String(result.servingGrams || ''),
           inputType: 'camera',
         },
       });
@@ -95,7 +97,18 @@ export default function CameraCaptureModal() {
             <View style={styles.focusBorder} />
             <Text style={styles.focusLabel}>Place food here</Text>
           </View>
-          <Text style={styles.hintText}>Get close and fill the frame</Text>
+          {/* ── Reference card/coin for scale ── */}
+          <View style={styles.referenceRow}>
+            <View style={styles.referenceCard}>
+              <View style={styles.referenceCardInner} />
+              <Text style={styles.referenceLabel}>Credit Card</Text>
+            </View>
+            <View style={styles.referenceCoin}>
+              <View style={styles.referenceCoinInner} />
+              <Text style={styles.referenceLabel}>Coin</Text>
+            </View>
+          </View>
+          <Text style={styles.hintText}>Place a card or coin nearby for scale</Text>
         </View>
 
         <View style={styles.bottomRow}>
@@ -153,6 +166,36 @@ const styles = StyleSheet.create({
   },
   bottomRow: {
     alignItems: 'center', paddingBottom: 60,
+  },
+  referenceRow: {
+    flexDirection: 'row', gap: 20, alignItems: 'center',
+    marginTop: 20,
+  },
+  referenceCard: {
+    width: 60, height: 38, borderRadius: 4,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)',
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  referenceCardInner: {
+    width: 48, height: 28, borderRadius: 2,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  referenceCoin: {
+    width: 38, height: 38, borderRadius: 19,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)',
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  referenceCoinInner: {
+    width: 26, height: 26, borderRadius: 13,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  referenceLabel: {
+    position: 'absolute', bottom: -16,
+    fontSize: 9, fontWeight: '600', color: 'rgba(255,255,255,0.5)',
   },
   captureBtn: {
     width: 76, height: 76, borderRadius: 38,

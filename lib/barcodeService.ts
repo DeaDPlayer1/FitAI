@@ -1,7 +1,41 @@
 import { getDb } from './db';
 import indianBarcodes from '@/assets/indian_barcodes.json';
 
+const USDA_API_KEY = process.env.EXPO_PUBLIC_USDA_API_KEY || 'DEMO_KEY';
 let bundledSeeded = false;
+
+// ── Rate limiter for Open Food Facts ──
+let offRequestTimestamps: number[] = [];
+const OFF_MAX_RPS = 10; // 10 requests per second max
+const OFF_MIN_INTERVAL = 100; // 100ms between requests
+
+async function rateLimitOpenFoodFacts(): Promise<void> {
+  const now = Date.now();
+  offRequestTimestamps = offRequestTimestamps.filter(t => now - t < 1000);
+  while (offRequestTimestamps.length >= OFF_MAX_RPS) {
+    await new Promise(resolve => setTimeout(resolve, OFF_MIN_INTERVAL));
+    offRequestTimestamps = offRequestTimestamps.filter(t => Date.now() - t < 1000);
+  }
+  offRequestTimestamps.push(now);
+}
+
+async function fetchWithRetry(url: string, options: RequestInit, retries = 2): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.status === 429 && attempt < retries) {
+        const retryAfter = parseInt(response.headers.get('Retry-After') || '2', 10);
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+        continue;
+      }
+      return response;
+    } catch (err) {
+      if (attempt === retries) throw err;
+      await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
+  }
+  throw new Error('Fetch failed after retries');
+}
 
 async function seedBundledBarcodes(db: any): Promise<void> {
   if (bundledSeeded) return;
@@ -124,6 +158,7 @@ export async function lookupBarcode(barcode: string): Promise<FoodProduct | null
   const offProduct = await tryOpenFoodFacts(barcode);
   if (offProduct) {
     await cacheProduct(db, offProduct, 'open_food_facts');
+    await saveScanHistory(db, barcode, offProduct, 'open_food_facts');
     return offProduct;
   }
 
@@ -131,17 +166,65 @@ export async function lookupBarcode(barcode: string): Promise<FoodProduct | null
   const usdaProduct = await tryUsda(barcode);
   if (usdaProduct) {
     await cacheProduct(db, usdaProduct, 'usda');
+    await saveScanHistory(db, barcode, usdaProduct, 'usda');
     return usdaProduct;
   }
 
+  await saveScanHistory(db, barcode, null, 'not_found');
   return null;
+}
+
+async function saveScanHistory(db: any, barcode: string, product: FoodProduct | null, source: string): Promise<void> {
+  try {
+    await db.runAsync(
+      `INSERT INTO barcode_scan_history
+       (barcode, food_name, brand, image_url, calories_100g, protein_100g, carbs_100g,
+        fat_100g, fiber_100g, sugar_100g, sodium_100g, serving_size, scanned_at, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      barcode,
+      product?.name || 'Unknown',
+      product?.brand || '',
+      product?.image_url || null,
+      product?.calories_100g || 0,
+      product?.protein_100g || 0,
+      product?.carbs_100g || 0,
+      product?.fat_100g || 0,
+      product?.fiber_100g || 0,
+      product?.sugar_100g || 0,
+      product?.sodium_100g || 0,
+      product?.serving_size || '100g',
+      new Date().toISOString(),
+      product ? source : 'not_found'
+    );
+  } catch (err) {
+    console.error('[barcode] History save error:', err);
+  }
+}
+
+export async function getScanHistory(limit = 20): Promise<any[]> {
+  try {
+    const db = await getDb();
+    return await db.getAllAsync<any>(
+      'SELECT * FROM barcode_scan_history ORDER BY scanned_at DESC LIMIT ?', limit
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function clearScanHistory(): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.runAsync('DELETE FROM barcode_scan_history');
+  } catch {}
 }
 
 async function tryOpenFoodFacts(barcode: string): Promise<FoodProduct | null> {
   console.log('[barcode] Querying Open Food Facts:', barcode);
   try {
+    await rateLimitOpenFoodFacts();
     const url = `https://world.openfoodfacts.org/api/v2/product/${barcode}.json?fields=product_name,brands,serving_size,nutriments,image_url,quantity`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: { 'User-Agent': 'FitnessApp/1.0 (nutrition tracking)' },
     });
 
@@ -189,7 +272,7 @@ async function tryOpenFoodFacts(barcode: string): Promise<FoodProduct | null> {
 async function tryUsda(barcode: string): Promise<FoodProduct | null> {
   console.log('[barcode] Querying USDA FoodData Central:', barcode);
   try {
-    const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=DEMO_KEY&query=${encodeURIComponent(barcode)}&dataType=Branded&pageSize=1`;
+    const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${USDA_API_KEY}&query=${encodeURIComponent(barcode)}&dataType=Branded&pageSize=1`;
     const response = await fetch(url);
     if (!response.ok) return null;
 
@@ -270,7 +353,7 @@ function round1(v: number): number {
 
 export function parseServingGrams(servingStr: string): number | null {
   if (!servingStr) return null;
-  const match = servingStr.match(/(\d+\.?\d*)\s*g/i);
+  const match = servingStr.match(/(\d+\.?\d*)\s*(g|ml)/i);
   return match ? parseFloat(match[1]) : null;
 }
 

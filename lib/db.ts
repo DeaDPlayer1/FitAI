@@ -63,6 +63,15 @@ async function initTables() {
       last_logged TEXT,
       source TEXT DEFAULT 'ai'
     );
+    CREATE TABLE IF NOT EXISTS food_scans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT,
+      image_uri TEXT NOT NULL,
+      food_name TEXT,
+      calories REAL,
+      meal_type TEXT,
+      scanned_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS food_cache (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       food_name TEXT UNIQUE NOT NULL,
@@ -80,6 +89,23 @@ async function initTables() {
       serving_size TEXT DEFAULT '100g',
       serving_grams REAL DEFAULT 100,
       source TEXT DEFAULT 'bundled'
+    );
+    CREATE TABLE IF NOT EXISTS barcode_scan_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      barcode TEXT NOT NULL,
+      food_name TEXT NOT NULL,
+      brand TEXT DEFAULT '',
+      image_url TEXT,
+      calories_100g REAL NOT NULL DEFAULT 0,
+      protein_100g REAL NOT NULL DEFAULT 0,
+      carbs_100g REAL NOT NULL DEFAULT 0,
+      fat_100g REAL NOT NULL DEFAULT 0,
+      fiber_100g REAL DEFAULT 0,
+      sugar_100g REAL DEFAULT 0,
+      sodium_100g REAL DEFAULT 0,
+      serving_size TEXT DEFAULT '100g',
+      scanned_at TEXT NOT NULL,
+      source TEXT DEFAULT 'open_food_facts'
     );
     `);
   // ── Migrate existing food_cache table to add barcode columns ──

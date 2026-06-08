@@ -51,10 +51,26 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
   const [foodName, setFoodName] = useState(nutrition.name || '');
   const [baseNutrition, setBaseNutrition] = useState<BaseNutrition>(() => {
     const parsed = parseServingString(nutrition.serving);
-    const gramEstimate = parsed?.unit === 'g' ? parsed.value : 100;
+    // Use AI-detected servingGrams when available (e.g., 330ml can → 330g)
+    const sg = nutrition.servingGrams;
+    if (sg && sg > 0) {
+      return {
+        baseServingValue: sg,
+        baseServingUnit: 'g',
+        baseServingLabel: nutrition.serving || `${sg}g`,
+        calories: nutrition.calories || 0,
+        protein_g: nutrition.protein || 0,
+        carbs_g: nutrition.carbs || 0,
+        fats_g: nutrition.fat || 0,
+        fiber_g: nutrition.fiber || 0,
+        sugar_g: 0,
+        sodium_g: 0,
+      };
+    }
+    const gramEstimate = (parsed?.unit === 'g' || parsed?.unit === 'ml') ? parsed.value : 100;
     return {
       baseServingValue: gramEstimate,
-      baseServingUnit: (parsed?.unit as any) || 'g',
+      baseServingUnit: (parsed?.unit === 'ml' ? 'ml' : (parsed?.unit as any) || 'g'),
       baseServingLabel: nutrition.serving || `${gramEstimate}g`,
       calories: nutrition.calories || 0,
       protein_g: nutrition.protein || 0,
@@ -65,18 +81,36 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
       sodium_g: 0,
     };
   });
-  const [scaled, setScaled] = useState<ScaledNutrition>(() => ({
-    calories: nutrition.calories || 0,
-    protein_g: nutrition.protein || 0,
-    carbs_g: nutrition.carbs || 0,
-    fats_g: nutrition.fat || 0,
-    fiber_g: nutrition.fiber || 0,
-    sugar_g: 0,
-    sodium_g: 0,
-    servingLabel: nutrition.serving || '1 serving',
-    servingQuantity: parseServingString(nutrition.serving)?.value || 1,
-    servingUnit: (parseServingString(nutrition.serving)?.unit) || 'serving',
-  }));
+  const [scaled, setScaled] = useState<ScaledNutrition>(() => {
+    const parsed = parseServingString(nutrition.serving);
+    const sg = nutrition.servingGrams;
+    if (sg && sg > 0) {
+      return {
+        calories: nutrition.calories || 0,
+        protein_g: nutrition.protein || 0,
+        carbs_g: nutrition.carbs || 0,
+        fats_g: nutrition.fat || 0,
+        fiber_g: nutrition.fiber || 0,
+        sugar_g: 0,
+        sodium_g: 0,
+        servingLabel: nutrition.serving || `${sg}g`,
+        servingQuantity: sg,
+        servingUnit: 'g',
+      };
+    }
+    return {
+      calories: nutrition.calories || 0,
+      protein_g: nutrition.protein || 0,
+      carbs_g: nutrition.carbs || 0,
+      fats_g: nutrition.fat || 0,
+      fiber_g: nutrition.fiber || 0,
+      sugar_g: 0,
+      sodium_g: 0,
+      servingLabel: nutrition.serving || '1 serving',
+      servingQuantity: parsed?.value || 1,
+      servingUnit: (parsed?.unit) || 'serving',
+    };
+  });
   const [mealType, setMealType] = useState(getMealTypeByTime());
   const [saving, setSaving] = useState(false);
 

@@ -119,11 +119,10 @@ export default function ProfileScreen() {
           } catch (e: any) {
             Alert.alert('Error', e.message);
           }
-          router.replace('/(auth)/login');
         },
       },
     ]);
-  }, [router]);
+  }, []);
 
   if (!user) {
     return (

@@ -15,6 +15,7 @@ export default function ConfirmFoodModal() {
     fat: parseFloat(params.fat as string) || 0,
     fiber: parseFloat(params.fiber as string) || 0,
     serving: (params.serving as string) || '1 serving',
+    servingGrams: parseFloat(params.servingGrams as string) || undefined,
   };
 
   return (
