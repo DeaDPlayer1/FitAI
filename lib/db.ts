@@ -47,6 +47,35 @@ async function initTables() {
       user_feedback TEXT,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS user_food_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      food_name TEXT NOT NULL,
+      aliases TEXT DEFAULT '[]',
+      calories REAL NOT NULL,
+      protein REAL NOT NULL,
+      carbs REAL NOT NULL,
+      fat REAL NOT NULL,
+      fiber REAL DEFAULT 0,
+      serving_size TEXT DEFAULT '1 serving',
+      serving_grams REAL DEFAULT 100,
+      log_count INTEGER DEFAULT 1,
+      last_logged TEXT,
+      source TEXT DEFAULT 'ai'
+    );
+    CREATE TABLE IF NOT EXISTS food_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      food_name TEXT UNIQUE NOT NULL,
+      aliases TEXT DEFAULT '[]',
+      calories_per_100g REAL NOT NULL,
+      protein_per_100g REAL NOT NULL,
+      carbs_per_100g REAL NOT NULL,
+      fat_per_100g REAL NOT NULL,
+      fiber_per_100g REAL DEFAULT 0,
+      serving_size TEXT DEFAULT '100g',
+      serving_grams REAL DEFAULT 100,
+      source TEXT DEFAULT 'bundled'
+    );
   `);
 }
 
@@ -148,5 +177,7 @@ export async function clearAllLocalData(): Promise<void> {
     DELETE FROM conversations;
     DELETE FROM ai_plans;
     DELETE FROM ai_weekly_reviews;
+    DELETE FROM user_food_history;
+    DELETE FROM food_cache;
   `);
 }

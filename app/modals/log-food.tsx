@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator, Alert, StyleSheet,
+  TextInput, ActivityIndicator, Alert, StyleSheet, Linking,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -15,11 +15,12 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
 import { useUserStore } from '@/store/userStore';
-import { parseFoodInput, analyzeFoodImage, MealLog } from '@/lib/nutritionAI';
-import { transcribeAudio } from '@/lib/voiceLogger';
+import { analyzeFood, analyzeImageWithAI, MealLog } from '@/lib/nutritionAI';
+
 import { uploadImage } from '@/lib/cloudinary';
 import { supabase } from '@/lib/supabase';
 import { syncUserData } from '@/lib/sync';
+import { useToast } from '@/components/ui/ToastNotification';
 
 type Step = 'input' | 'parsing' | 'review';
 
@@ -30,6 +31,128 @@ function AnimatedProgressFill({ pct, color, delay: delayMs }: { pct: number; col
   }, []);
   const anim = useAnimatedStyle(() => ({ width: `${w.value * 100}%` }));
   return <Animated.View style={[styles.macroProgressFill, { backgroundColor: color }, anim]} />;
+}
+
+function VoiceInputButton({
+  onResult,
+  onProcessingChange,
+}: {
+  onResult: (transcript: string) => void;
+  onProcessingChange: (processing: boolean) => void;
+}) {
+  const [uiState, setUIState] = useState<'idle' | 'listening' | 'processing' | 'error'>('idle');
+  const [transcript, setTranscript] = useState('');
+  const voiceRef = useRef<any>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isAvailable = useRef(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const Voice = require('@react-native-voice/voice').default;
+        voiceRef.current = Voice;
+        Voice.onSpeechStart = () => { if (mounted) setUIState('listening'); };
+        Voice.onSpeechEnd = () => { if (mounted) setUIState('processing'); };
+        Voice.onSpeechResults = (e: any) => {
+          const text = e.value?.[0] || '';
+          if (!mounted) return;
+          setTranscript(text);
+          if (text.trim().length > 1) {
+            onProcessingChange(true);
+            setTimeout(() => { if (mounted) onResult(text); }, 100);
+          } else {
+            setUIState('idle');
+          }
+        };
+        Voice.onSpeechError = () => {
+          if (mounted) { setUIState('idle'); }
+        };
+      } catch {
+        isAvailable.current = false;
+      }
+    })();
+    return () => {
+      mounted = false;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      try {
+        if (voiceRef.current) {
+          voiceRef.current.destroy().then(() => voiceRef.current.removeAllListeners()).catch(() => {});
+        }
+      } catch {}
+    };
+  }, []);
+
+  const startListening = async () => {
+    if (!isAvailable.current) {
+      Alert.alert('Voice', 'Voice requires the full app build.');
+      return;
+    }
+    const { granted } = await Audio.requestPermissionsAsync();
+    if (!granted) {
+      Alert.alert('Permission Required', 'Microphone access is needed for voice food logging.',
+        [{ text: 'Open Settings', onPress: () => Linking.openSettings() }, { text: 'Cancel' }]);
+      return;
+    }
+    try {
+      setUIState('listening');
+      onProcessingChange(false);
+      await voiceRef.current.start('en-US');
+      timerRef.current = setTimeout(async () => {
+        try { await voiceRef.current.stop(); } catch {}
+      }, 8000);
+    } catch {
+      setUIState('idle');
+    }
+  };
+
+  const pulseAnim = useSharedValue(1);
+  useEffect(() => {
+    if (uiState === 'listening') {
+      pulseAnim.value = withTiming(1.3, { duration: 600, easing: Easing.inOut(Easing.ease) });
+      const interval = setInterval(() => {
+        pulseAnim.value = withTiming(1, { duration: 600, easing: Easing.inOut(Easing.ease) });
+        setTimeout(() => {
+          pulseAnim.value = withTiming(1.3, { duration: 600, easing: Easing.inOut(Easing.ease) });
+        }, 600);
+      }, 1200);
+      return () => clearInterval(interval);
+    } else {
+      pulseAnim.value = withTiming(1, { duration: 200 });
+    }
+  }, [uiState]);
+
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pulseAnim.value }],
+  }));
+
+  return (
+    <View>
+      <Animated.View style={uiState === 'listening' ? animStyle : undefined}>
+        <TouchableOpacity
+          onPress={startListening}
+          style={[
+            styles.toolBtn,
+            uiState === 'listening' && styles.toolBtnActive,
+            uiState === 'processing' && { backgroundColor: theme.colors.primary },
+          ]}
+          disabled={uiState === 'listening' || uiState === 'processing'}
+        >
+          {uiState === 'processing' ? (
+            <ActivityIndicator size="small" color="#FFF" />
+          ) : (
+            <Feather name="mic" size={20} color={uiState === 'listening' ? '#FFF' : theme.colors.primaryDeep} />
+          )}
+        </TouchableOpacity>
+      </Animated.View>
+      {uiState === 'listening' && (
+        <Text style={styles.voiceLabel}>Listening...</Text>
+      )}
+      {uiState === 'processing' && transcript ? (
+        <Text style={styles.voiceTranscript}>Heard: {transcript}</Text>
+      ) : null}
+    </View>
+  );
 }
 
 export default function LogFoodModal() {
@@ -49,129 +172,16 @@ export default function LogFoodModal() {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [analyzingSource, setAnalyzingSource] = useState<'text' | 'voice' | 'vision'>('text');
-  const [isListening, setIsListening] = useState(false);
-
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const isStartingRef = useRef(false);
-  const isRecordingActiveRef = useRef(false);
-  const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const foodTextRef = useRef('');
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
 
-  const startRecording = async () => {
-    if (isStartingRef.current || recordingRef.current) return;
-    isStartingRef.current = true;
-    foodTextRef.current = '';
-    setFoodText('');
-    try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Microphone access is required.');
-        return;
-      }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      recordingRef.current = recording;
-      setRecording(recording);
-      setIsListening(true);
-      isRecordingActiveRef.current = true;
-      scheduleNextChunk();
-    } catch (err) {
-      console.error('Failed to start recording', err);
-    } finally {
-      isStartingRef.current = false;
-    }
-  };
-
-  const scheduleNextChunk = () => {
-    chunkTimerRef.current = setTimeout(processChunk, 3000);
-  };
-
-  const processChunk = async () => {
-    if (!isRecordingActiveRef.current) return;
-    const rec = recordingRef.current;
-    if (!rec) return;
-    try {
-      await rec.stopAndUnloadAsync();
-      const uri = rec.getURI();
-      recordingRef.current = null;
-      if (uri) {
-        const transcript = await transcribeAudio(uri);
-        if (transcript?.trim()) {
-          foodTextRef.current += (foodTextRef.current ? ' ' : '') + transcript.trim();
-          setFoodText(foodTextRef.current);
-        }
-      }
-    } catch (err) {
-      console.error('Chunk transcription failed', err);
-    } finally {
-      if (isRecordingActiveRef.current) {
-        try {
-          const { recording: nextRec } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-          recordingRef.current = nextRec;
-          setRecording(nextRec);
-          scheduleNextChunk();
-        } catch (err) {
-          console.error('Failed to start next chunk', err);
-          isRecordingActiveRef.current = false;
-          setRecording(null);
-        }
-      }
-    }
-  };
-
-  const stopRecording = async () => {
-    isRecordingActiveRef.current = false;
-    if (chunkTimerRef.current) {
-      clearTimeout(chunkTimerRef.current);
-      chunkTimerRef.current = null;
-    }
-    setIsListening(false);
-    const rec = recordingRef.current;
-    if (!rec) {
-      setRecording(null);
-      return;
-    }
-    try {
-      await rec.stopAndUnloadAsync();
-      const uri = rec.getURI();
-      recordingRef.current = null;
-      setRecording(null);
-      if (uri) {
-        const transcript = await transcribeAudio(uri);
-        if (transcript?.trim()) {
-          foodTextRef.current += (foodTextRef.current ? ' ' : '') + transcript.trim();
-          setFoodText(foodTextRef.current);
-        }
-      }
-      const finalText = foodTextRef.current;
-      if (!finalText.trim()) {
-        Alert.alert('No Speech Detected', 'Please try again and speak clearly.');
-        setStep('input');
-        return;
-      }
-      setAnalyzingSource('voice');
-      setStep('parsing');
-      const result = await parseFoodInput(finalText);
-      setParsedMeal(result);
-      setStep('review');
-    } catch (err: any) {
-      console.error('stopRecording error:', err);
-      Alert.alert('Voice Error', err.message || 'Could not process voice input. Please try typing instead.');
-      setStep('input');
-      setRecording(null);
-      recordingRef.current = null;
-    }
-    foodTextRef.current = '';
-  };
+  const { showToast } = useToast();
 
   const handleVisionAnalysis = async (uri: string) => {
     setAnalyzingSource('vision');
     setStep('parsing');
     try {
       const imageUrl = await uploadImage(uri);
-      const mealData = await analyzeFoodImage(imageUrl);
+      const mealData = await analyzeFood({ imageBase64: imageUrl, userId: user?.id || '' });
       setParsedMeal(mealData);
       setStep('review');
     } catch (err: any) {
@@ -180,41 +190,52 @@ export default function LogFoodModal() {
     }
   };
 
-  const handleGalleryPick = async () => {
+  const pickFromGallery = async () => {
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Permission Denied', 'Photo library access is required to import images.');
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Photo library access is needed to import food images.',
+          [{ text: 'Open Settings', onPress: () => Linking.openSettings() }, { text: 'Cancel' }]
+        );
         return;
       }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
-        quality: 0.7,
-        base64: true,
+        quality: 1,
+        base64: false,
       });
+
       if (result.canceled) return;
-      const asset = result.assets[0];
-      if (!asset || !asset.base64) {
-        Alert.alert('Error', 'Could not read the selected image. Please try again.');
-        return;
-      }
-      setSelectedImageUri(asset.uri);
+
+      const uri = result.assets[0].uri;
+      setSelectedImageUri(uri);
       setAnalyzingSource('vision');
       setStep('parsing');
-      const dataUrl = `data:image/jpeg;base64,${asset.base64}`;
-      const mealData = await analyzeFoodImage(dataUrl);
-      setParsedMeal(mealData);
-      setStep('review');
+
+      const analysisResult = await analyzeImageWithAI(uri);
+      (router as any).replace({
+        pathname: '/modals/confirm-food',
+        params: {
+          imageUri: uri,
+          aiDescription: analysisResult.ai_description,
+          foodName: analysisResult.name,
+          calories: String(analysisResult.calories),
+          protein: String(analysisResult.protein),
+          carbs: String(analysisResult.carbs),
+          fat: String(analysisResult.fat),
+          fiber: String(analysisResult.fiber),
+          serving: analysisResult.serving,
+          inputType: 'gallery',
+        },
+      });
     } catch (err: any) {
-      console.error('handleGalleryPick error:', err);
-      if (err.message?.includes('Network') || err.message?.includes('fetch')) {
-        Alert.alert('Connection Error', 'Please check your internet connection and try again.');
-      } else {
-        Alert.alert('Analysis Error', 'Could not analyze this image. Try a clearer photo or enter manually.');
-      }
       setStep('input');
+      showToast('Could not analyse this image. Try a clearer photo or enter manually.', 'error');
     }
   };
 
@@ -222,7 +243,7 @@ export default function LogFoodModal() {
     if (!foodText.trim()) return;
     setStep('parsing');
     try {
-      const result = await parseFoodInput(foodText.trim());
+      const result = await analyzeFood({ text: foodText.trim(), userId: user?.id || '' });
       setParsedMeal(result);
       setStep('review');
     } catch (e: any) {
@@ -290,30 +311,38 @@ export default function LogFoodModal() {
               />
               
               <View style={styles.toolRow}>
-                <TouchableOpacity 
-                  onPressIn={startRecording} 
-                  onPressOut={stopRecording}
-                  style={[styles.toolBtn, isListening && styles.toolBtnActive]}
-                  disabled={isListening}
-                >
-                  <Feather name={isListening ? 'mic' : 'mic'} size={20} color={isListening ? '#FFF' : theme.colors.primaryDeep} />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={async () => {
-                    const perm = await ImagePicker.requestCameraPermissionsAsync();
-                    if (!perm.granted) {
-                      Alert.alert('Permission Denied', 'Camera access is required to take photos.');
-                      return;
-                    }
-                    const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.7 });
-                    if (!result.canceled) handleVisionAnalysis(result.assets[0].uri);
+                <VoiceInputButton
+                  onResult={(transcript) => {
+                    (router as any).replace({
+                      pathname: '/modals/confirm-food',
+                      params: {
+                        voiceTranscript: transcript,
+                        foodName: transcript,
+                        calories: '0',
+                        protein: '0',
+                        carbs: '0',
+                        fat: '0',
+                        fiber: '0',
+                        serving: '1 serving',
+                        inputType: 'voice',
+                      },
+                    });
                   }}
+                  onProcessingChange={(processing) => {
+                    if (processing) {
+                      setAnalyzingSource('voice');
+                      setStep('parsing');
+                    }
+                  }}
+                />
+                <TouchableOpacity 
+                  onPress={() => router.push('/modals/camera-capture')}
                   style={styles.toolBtn}
                 >
                   <Feather name="camera" size={20} color={theme.colors.primaryDeep} />
                 </TouchableOpacity>
                 <TouchableOpacity 
-                  onPress={handleGalleryPick}
+                  onPress={pickFromGallery}
                   style={styles.toolBtn}
                 >
                   <Feather name="image" size={20} color={theme.colors.primaryDeep} />
@@ -634,5 +663,13 @@ const styles = StyleSheet.create({
   secondaryCta: { alignItems: 'center', paddingVertical: 12 },
   secondaryCtaText: {
     fontSize: 14, fontWeight: '700', color: theme.colors.text.muted,
+  },
+  voiceLabel: {
+    fontSize: 11, fontWeight: '600', color: theme.colors.primary,
+    textAlign: 'center', marginTop: 4,
+  },
+  voiceTranscript: {
+    fontSize: 11, fontWeight: '600', color: theme.colors.text.muted,
+    textAlign: 'center', marginTop: 4, maxWidth: 120,
   },
 });

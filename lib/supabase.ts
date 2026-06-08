@@ -47,10 +47,10 @@ const ExpoStorage = {
     try {
       // Always write to AsyncStorage (reliable replica)
       await AsyncStorage.setItem(key, value).catch(() => {});
-      // Also write to SecureStore for auth keys
+      // Also write to SecureStore for auth keys (only if under 2048 byte limit)
       if (key.startsWith(SESSION_KEY_MATCH)) {
         const avail = await ensureSecureStore();
-        if (avail) {
+        if (avail && value.length <= 2048) {
           await SecureStore.setItemAsync(key, value).catch(() => {});
         }
       }

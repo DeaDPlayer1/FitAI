@@ -88,7 +88,10 @@
       "expo-audio",
       "expo-asset",
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-secure-store",
+      ["expo-camera", {"cameraPermission": "Allow FitnessApp to access your camera to photograph food for nutrition analysis."}],
+      ["expo-image-picker", {"photosPermission": "Allow FitnessApp to access your photos to analyse food."}],
+      ["@react-native-voice/voice", {"microphonePermission": "Allow FitnessApp to use your microphone for voice food logging."}]
     ],
     "experiments": {
       "typedRoutes": true,

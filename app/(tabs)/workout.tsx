@@ -569,6 +569,8 @@ export default function WorkoutScreen() {
   const [workoutData, setWorkoutData] = useState<WorkoutDataPoint[]>([]);
   const [workoutRange, setWorkoutRange] = useState<'1M' | '3M' | '6M' | 'All'>('1M');
   const [workoutLoading, setWorkoutLoading] = useState(false);
+  const [workoutError, setWorkoutError] = useState<string | null>(null);
+  const workoutLoadingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [workoutTooltip, setWorkoutTooltip] = useState<{ point: WorkoutDataPoint; x: number } | null>(null);
   const [workoutActiveIdx, setWorkoutActiveIdx] = useState<number | null>(null);
 
@@ -576,6 +578,8 @@ export default function WorkoutScreen() {
   const [calorieData, setCalorieData] = useState<CalorieDataPoint[]>([]);
   const [calRange, setCalRange] = useState<'week' | '4W' | '3M'>('week');
   const [calLoading, setCalLoading] = useState(false);
+  const [calError, setCalError] = useState<string | null>(null);
+  const calLoadingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [calTooltip, setCalTooltip] = useState<{ point: CalorieDataPoint; x: number } | null>(null);
   const [calActiveIdx, setCalActiveIdx] = useState<number | null>(null);
 
@@ -584,18 +588,28 @@ export default function WorkoutScreen() {
   const [weightRange, setWeightRange] = useState<'1W' | '1M' | '3M' | 'All'>('1M');
   const [weightUnit, setWeightUnit] = useState<'kg' | 'lbs'>('kg');
   const [weightLoading, setWeightLoading] = useState(false);
+  const [weightError, setWeightError] = useState<string | null>(null);
+  const weightLoadingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [weightTooltip, setWeightTooltip] = useState<{ point: WeightDataPoint; x: number } | null>(null);
   const [weightActiveIdx, setWeightActiveIdx] = useState<number | null>(null);
   const [showWeightSheet, setShowWeightSheet] = useState(false);
   const [weightInput, setWeightInput] = useState('');
 
   useEffect(() => {
+    setWorkoutError(null);
+    setCalError(null);
+    setWeightError(null);
     if (userId) {
       fetchProfile();
       fetchExercises();
       fetchCalorieData();
       fetchWeightData();
     }
+    return () => {
+      if (workoutLoadingTimeout.current) clearTimeout(workoutLoadingTimeout.current);
+      if (calLoadingTimeout.current) clearTimeout(calLoadingTimeout.current);
+      if (weightLoadingTimeout.current) clearTimeout(weightLoadingTimeout.current);
+    };
   }, [userId]);
 
   // ── Profile ──
@@ -615,14 +629,20 @@ export default function WorkoutScreen() {
 
   // ── Section 1: Workout Progress ──
   const fetchExercises = async () => {
-    if (!userId) return;
+    if (!userId) { setWorkoutLoading(false); return; }
     setWorkoutLoading(true);
+    setWorkoutError(null);
+    workoutLoadingTimeout.current = setTimeout(() => {
+      setWorkoutLoading(false);
+      setWorkoutError('Timed out loading exercises. Pull down to retry.');
+    }, 15000);
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('exercise_progression')
-        .select('exercise_id, exercise_name, id', { head: false, count: 'exact' })
+        .select('exercise_id, exercise_name, id')
         .eq('user_id', userId)
         .order('exercise_name', { ascending: true });
+      if (error) throw error;
       const distinct = new Map<string, { id: string; name: string; count: number }>();
       for (const row of data || []) {
         const key = row.exercise_id || row.exercise_name;
@@ -637,9 +657,12 @@ export default function WorkoutScreen() {
       if (list.length > 0 && !selectedEx) {
         setSelectedEx(list[0].id);
       }
-    } catch (e) {
+      setWorkoutError(null);
+    } catch (e: any) {
       console.error('fetchExercises:', e);
+      setWorkoutError(e.message || 'Could not load exercises. Pull down to retry.');
     } finally {
+      if (workoutLoadingTimeout.current) { clearTimeout(workoutLoadingTimeout.current); workoutLoadingTimeout.current = null; }
       setWorkoutLoading(false);
     }
   };
@@ -649,10 +672,15 @@ export default function WorkoutScreen() {
   }, [selectedEx, workoutRange, userId]);
 
   const fetchWorkoutData = async () => {
-    if (!userId || !selectedEx) return;
+    if (!userId || !selectedEx) { setWorkoutLoading(false); return; }
     setWorkoutLoading(true);
     setWorkoutTooltip(null);
     setWorkoutActiveIdx(null);
+    setWorkoutError(null);
+    workoutLoadingTimeout.current = setTimeout(() => {
+      setWorkoutLoading(false);
+      setWorkoutError('Timed out loading workout data. Pull down to retry.');
+    }, 15000);
     try {
       const now = new Date();
       let startDate: Date | null = null;
@@ -669,7 +697,8 @@ export default function WorkoutScreen() {
 
       if (startDate) query = query.gte('session_date', startDate.toISOString().split('T')[0]);
 
-      const { data } = await query;
+      const { data, error } = await query;
+      if (error) throw error;
 
       const grouped = new Map<string, { weights: number[]; totalSets: number; reps: number[] }>();
       for (const row of data || []) {
@@ -695,9 +724,12 @@ export default function WorkoutScreen() {
       } else {
         setWorkoutData(points.slice(-8));
       }
-    } catch (e) {
+      setWorkoutError(null);
+    } catch (e: any) {
       console.error('fetchWorkoutData:', e);
+      setWorkoutError(e.message || 'Could not load workout data.');
     } finally {
+      if (workoutLoadingTimeout.current) { clearTimeout(workoutLoadingTimeout.current); workoutLoadingTimeout.current = null; }
       setWorkoutLoading(false);
     }
   };
@@ -723,10 +755,15 @@ export default function WorkoutScreen() {
 
   // ── Section 2: Calories ──
   const fetchCalorieData = async () => {
-    if (!userId) return;
+    if (!userId) { setCalLoading(false); return; }
     setCalLoading(true);
     setCalTooltip(null);
     setCalActiveIdx(null);
+    setCalError(null);
+    calLoadingTimeout.current = setTimeout(() => {
+      setCalLoading(false);
+      setCalError('Timed out loading calorie data. Pull down to retry.');
+    }, 15000);
     try {
       const now = new Date();
       let startDate: Date;
@@ -745,13 +782,14 @@ export default function WorkoutScreen() {
         startDate = new Date(now); startDate.setMonth(startDate.getMonth() - 3);
       }
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('meal_logs')
         .select('calories, protein_g, carbs_g, fat_g, logged_at')
         .eq('user_id', userId)
         .gte('logged_at', startDate.toISOString())
         .lte('logged_at', endDate.toISOString())
         .order('logged_at', { ascending: true });
+      if (error) throw error;
 
       const grouped = new Map<string, { cal: number; pro: number; carb: number; fat: number }>();
       for (const row of data || []) {
@@ -789,9 +827,12 @@ export default function WorkoutScreen() {
         })).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       }
       setCalorieData(points);
-    } catch (e) {
+      setCalError(null);
+    } catch (e: any) {
       console.error('fetchCalorieData:', e);
+      setCalError(e.message || 'Could not load calorie data.');
     } finally {
+      if (calLoadingTimeout.current) { clearTimeout(calLoadingTimeout.current); calLoadingTimeout.current = null; }
       setCalLoading(false);
     }
   };
@@ -817,16 +858,22 @@ export default function WorkoutScreen() {
 
   // ── Section 3: Body Weight ──
   const fetchWeightData = async () => {
-    if (!userId) return;
+    if (!userId) { setWeightLoading(false); return; }
     setWeightLoading(true);
     setWeightTooltip(null);
     setWeightActiveIdx(null);
+    setWeightError(null);
+    weightLoadingTimeout.current = setTimeout(() => {
+      setWeightLoading(false);
+      setWeightError('Timed out loading weight data. Pull down to retry.');
+    }, 15000);
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('weight_logs')
         .select('weight_kg, logged_at')
         .eq('user_id', userId)
         .order('logged_at', { ascending: true });
+      if (error) throw error;
 
       const pts = (data || []).map(r => ({
         date: new Date(r.logged_at).toISOString().split('T')[0],
@@ -841,9 +888,12 @@ export default function WorkoutScreen() {
 
       const filtered = startDate ? pts.filter(p => new Date(p.date) >= startDate!) : pts;
       setWeightData(filtered);
-    } catch (e) {
+      setWeightError(null);
+    } catch (e: any) {
       console.error('fetchWeightData:', e);
+      setWeightError(e.message || 'Could not load weight data.');
     } finally {
+      if (weightLoadingTimeout.current) { clearTimeout(weightLoadingTimeout.current); weightLoadingTimeout.current = null; }
       setWeightLoading(false);
     }
   };
@@ -1064,7 +1114,12 @@ export default function WorkoutScreen() {
                 <FilterRow options={calFilterOptions} selected={calRange} onSelect={(k) => setCalRange(k as typeof calRange)} compact />
               </View>
 
-              {calLoading && calorieData.length === 0 ? (
+              {calError ? (
+                <View style={{ paddingVertical: 20, alignItems: 'center', gap: 8 }}>
+                  <Feather name="alert-circle" size={20} color={RED} />
+                  <Text style={{ fontSize: 13, color: MUTED, textAlign: 'center' }}>{calError}</Text>
+                </View>
+              ) : calLoading && calorieData.length === 0 ? (
                 <View style={{ paddingVertical: 32, alignItems: 'center' }}>
                   <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
                 </View>
@@ -1138,7 +1193,12 @@ export default function WorkoutScreen() {
                 </View>
               </View>
 
-              {weightLoading && weightData.length === 0 ? (
+              {weightError ? (
+                <View style={{ paddingVertical: 20, alignItems: 'center', gap: 8 }}>
+                  <Feather name="alert-circle" size={20} color={RED} />
+                  <Text style={{ fontSize: 13, color: MUTED, textAlign: 'center' }}>{weightError}</Text>
+                </View>
+              ) : weightLoading && weightData.length === 0 ? (
                 <View style={{ paddingVertical: 32, alignItems: 'center' }}>
                   <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
                 </View>
@@ -1242,7 +1302,12 @@ export default function WorkoutScreen() {
                     <FilterRow options={workoutFilterOptions} selected={workoutRange} onSelect={(k) => setWorkoutRange(k as typeof workoutRange)} compact />
                   </View>
 
-                  {workoutLoading && workoutData.length === 0 ? (
+                  {workoutError ? (
+                    <View style={{ paddingVertical: 20, alignItems: 'center', gap: 8 }}>
+                      <Feather name="alert-circle" size={20} color={RED} />
+                      <Text style={{ fontSize: 13, color: MUTED, textAlign: 'center' }}>{workoutError}</Text>
+                    </View>
+                  ) : workoutLoading && workoutData.length === 0 ? (
                     <View style={{ paddingVertical: 32, alignItems: 'center' }}>
                       <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
                     </View>
