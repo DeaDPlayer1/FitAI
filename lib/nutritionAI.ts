@@ -2,6 +2,17 @@ import { groqJSON, groqChat, groqChatRaw } from './groq';
 import { validateResponse } from './safetyEngine';
 import type { ValidationInput } from './safetyEngine';
 
+function extractJSON(text: string): string {
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) return fenceMatch[1].trim();
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    return text.substring(start, end + 1);
+  }
+  return text;
+}
+
 export interface FoodItem {
   name: string;
   quantity: string;
@@ -68,7 +79,7 @@ Return ONLY valid JSON matching this structure:
 
     const raw = await groqChatRaw(
       messages as any, // Vision messages have non-standard structure (text + image_url) 
-      'llama-4-scout-17b-16e-instruct',
+      'meta-llama/llama-4-scout-17b-16e-instruct',
       4000
     );
     
@@ -78,7 +89,9 @@ Return ONLY valid JSON matching this structure:
       cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
     }
     
-    return JSON.parse(cleaned);
+    const jsonStr = extractJSON(cleaned);
+    console.log('[nutritionAI] extJSON →', jsonStr.substring(0, 200));
+    return JSON.parse(jsonStr);
   } catch (error) {
     console.error('[nutritionAI] analyzeFoodImage error:', error);
     throw new Error('Could not analyze the food image. Please try again or log your meal manually.');

@@ -2,6 +2,18 @@
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
 
+function friendlyGroqError(status: number, bodyMsg: string): string {
+  if (status === 429) return 'You have reached the free-tier rate limit. Please wait a moment before trying again.';
+  if (status === 403) return 'Your free-tier API quota has been exceeded for today. Please try again tomorrow or upgrade your plan.';
+  if (status === 404) return 'This AI model is temporarily unavailable on the free tier. Please try a different model or try again later.';
+  if (status === 401) return 'Authentication failed. Please check your API key in settings.';
+  if (status >= 500) return 'The AI service is temporarily overloaded. Please try again in a few seconds.';
+  if (bodyMsg?.toLowerCase().includes('quota')) return 'Your free-tier quota has been reached. Please try again later.';
+  if (bodyMsg?.toLowerCase().includes('rate limit')) return 'You are sending requests too fast. Please slow down and try again.';
+  if (bodyMsg?.toLowerCase().includes('credit')) return 'Your account credits are exhausted. Please add payment method or wait for reset.';
+  return `AI service error (${status}). Please try again.`;
+};
+
 // ── Inline Rate Limiter ──
 let requestTimestamps: number[] = [];
 const MAX_REQUESTS_PER_MINUTE = 30;
@@ -98,6 +110,7 @@ export async function groqChatRaw(
       return { ...msg, content: textContent };
     }
     if (typeof msg.content === 'string') return msg;
+    if (Array.isArray(msg.content)) return msg;
     return { ...msg, content: String(msg.content) };
   });
 
@@ -132,14 +145,15 @@ export async function groqChatRaw(
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        const errMsg = `Groq API error (${response.status}): ${errorData?.error?.message || response.statusText}`;
+        const rawMsg = errorData?.error?.message || response.statusText;
+        const friendly = friendlyGroqError(response.status, rawMsg);
         
         // Retry on 429 (rate limit) or 5xx (server errors)
         if (response.status === 429 || response.status >= 500) {
-          lastError = new Error(errMsg);
+          lastError = new Error(friendly);
           continue;
         }
-        throw new Error(errMsg);
+        throw new Error(friendly);
       }
 
       const data = await response.json();

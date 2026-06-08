@@ -49,10 +49,21 @@ export default function LogFoodModal() {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [analyzingSource, setAnalyzingSource] = useState<'text' | 'voice' | 'vision'>('text');
+  const [isListening, setIsListening] = useState(false);
 
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const isStartingRef = useRef(false);
+  const isRecordingActiveRef = useRef(false);
+  const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const foodTextRef = useRef('');
+  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
 
   const startRecording = async () => {
+    if (isStartingRef.current || recordingRef.current) return;
+    isStartingRef.current = true;
+    foodTextRef.current = '';
+    setFoodText('');
     try {
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
@@ -61,32 +72,98 @@ export default function LogFoodModal() {
       }
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      recordingRef.current = recording;
       setRecording(recording);
+      setIsListening(true);
+      isRecordingActiveRef.current = true;
+      scheduleNextChunk();
     } catch (err) {
       console.error('Failed to start recording', err);
+    } finally {
+      isStartingRef.current = false;
+    }
+  };
+
+  const scheduleNextChunk = () => {
+    chunkTimerRef.current = setTimeout(processChunk, 3000);
+  };
+
+  const processChunk = async () => {
+    if (!isRecordingActiveRef.current) return;
+    const rec = recordingRef.current;
+    if (!rec) return;
+    try {
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+      recordingRef.current = null;
+      if (uri) {
+        const transcript = await transcribeAudio(uri);
+        if (transcript?.trim()) {
+          foodTextRef.current += (foodTextRef.current ? ' ' : '') + transcript.trim();
+          setFoodText(foodTextRef.current);
+        }
+      }
+    } catch (err) {
+      console.error('Chunk transcription failed', err);
+    } finally {
+      if (isRecordingActiveRef.current) {
+        try {
+          const { recording: nextRec } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+          recordingRef.current = nextRec;
+          setRecording(nextRec);
+          scheduleNextChunk();
+        } catch (err) {
+          console.error('Failed to start next chunk', err);
+          isRecordingActiveRef.current = false;
+          setRecording(null);
+        }
+      }
     }
   };
 
   const stopRecording = async () => {
+    isRecordingActiveRef.current = false;
+    if (chunkTimerRef.current) {
+      clearTimeout(chunkTimerRef.current);
+      chunkTimerRef.current = null;
+    }
+    setIsListening(false);
+    const rec = recordingRef.current;
+    if (!rec) {
+      setRecording(null);
+      return;
+    }
     try {
-      if (!recording) return;
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
+      recordingRef.current = null;
       setRecording(null);
       if (uri) {
-        setAnalyzingSource('voice');
-        setStep('parsing');
         const transcript = await transcribeAudio(uri);
-        setFoodText(transcript);
-        const result = await parseFoodInput(transcript);
-        setParsedMeal(result);
-        setStep('review');
+        if (transcript?.trim()) {
+          foodTextRef.current += (foodTextRef.current ? ' ' : '') + transcript.trim();
+          setFoodText(foodTextRef.current);
+        }
       }
-    } catch (err) {
-      console.error('Failed to stop recording', err);
+      const finalText = foodTextRef.current;
+      if (!finalText.trim()) {
+        Alert.alert('No Speech Detected', 'Please try again and speak clearly.');
+        setStep('input');
+        return;
+      }
+      setAnalyzingSource('voice');
+      setStep('parsing');
+      const result = await parseFoodInput(finalText);
+      setParsedMeal(result);
+      setStep('review');
+    } catch (err: any) {
+      console.error('stopRecording error:', err);
+      Alert.alert('Voice Error', err.message || 'Could not process voice input. Please try typing instead.');
       setStep('input');
       setRecording(null);
+      recordingRef.current = null;
     }
+    foodTextRef.current = '';
   };
 
   const handleVisionAnalysis = async (uri: string) => {
@@ -99,6 +176,44 @@ export default function LogFoodModal() {
       setStep('review');
     } catch (err: any) {
       Alert.alert('Vision Error', err.message);
+      setStep('input');
+    }
+  };
+
+  const handleGalleryPick = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Permission Denied', 'Photo library access is required to import images.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.7,
+        base64: true,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset || !asset.base64) {
+        Alert.alert('Error', 'Could not read the selected image. Please try again.');
+        return;
+      }
+      setSelectedImageUri(asset.uri);
+      setAnalyzingSource('vision');
+      setStep('parsing');
+      const dataUrl = `data:image/jpeg;base64,${asset.base64}`;
+      const mealData = await analyzeFoodImage(dataUrl);
+      setParsedMeal(mealData);
+      setStep('review');
+    } catch (err: any) {
+      console.error('handleGalleryPick error:', err);
+      if (err.message?.includes('Network') || err.message?.includes('fetch')) {
+        Alert.alert('Connection Error', 'Please check your internet connection and try again.');
+      } else {
+        Alert.alert('Analysis Error', 'Could not analyze this image. Try a clearer photo or enter manually.');
+      }
       setStep('input');
     }
   };
@@ -178,12 +293,18 @@ export default function LogFoodModal() {
                 <TouchableOpacity 
                   onPressIn={startRecording} 
                   onPressOut={stopRecording}
-                  style={[styles.toolBtn, !!recording && styles.toolBtnActive]}
+                  style={[styles.toolBtn, isListening && styles.toolBtnActive]}
+                  disabled={isListening}
                 >
-                  <Feather name="mic" size={20} color={!!recording ? '#FFF' : theme.colors.primaryDeep} />
+                  <Feather name={isListening ? 'mic' : 'mic'} size={20} color={isListening ? '#FFF' : theme.colors.primaryDeep} />
                 </TouchableOpacity>
                 <TouchableOpacity 
                   onPress={async () => {
+                    const perm = await ImagePicker.requestCameraPermissionsAsync();
+                    if (!perm.granted) {
+                      Alert.alert('Permission Denied', 'Camera access is required to take photos.');
+                      return;
+                    }
                     const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.7 });
                     if (!result.canceled) handleVisionAnalysis(result.assets[0].uri);
                   }}
@@ -192,15 +313,21 @@ export default function LogFoodModal() {
                   <Feather name="camera" size={20} color={theme.colors.primaryDeep} />
                 </TouchableOpacity>
                 <TouchableOpacity 
-                  onPress={async () => {
-                    const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, quality: 0.7 });
-                    if (!result.canceled) handleVisionAnalysis(result.assets[0].uri);
-                  }}
+                  onPress={handleGalleryPick}
                   style={styles.toolBtn}
                 >
                   <Feather name="image" size={20} color={theme.colors.primaryDeep} />
                 </TouchableOpacity>
               </View>
+
+              {selectedImageUri && (
+                <View style={styles.thumbnailRow}>
+                  <Animated.Image source={{ uri: selectedImageUri }} style={styles.thumbnailImage} />
+                  <TouchableOpacity onPress={() => setSelectedImageUri(null)} style={styles.thumbnailClear}>
+                    <Feather name="x" size={14} color="#FFF" />
+                  </TouchableOpacity>
+                </View>
+              )}
 
               <TouchableOpacity style={styles.analyzeBtn} onPress={handleParse}>
                 <Text style={styles.analyzeBtnText}>Analyze with AI</Text>
@@ -212,7 +339,13 @@ export default function LogFoodModal() {
         {step === 'parsing' && (
           <View style={styles.loadingState}>
             <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={styles.loadingText}>AI is calculating nutrients...</Text>
+            <Text style={styles.loadingText}>
+              {analyzingSource === 'voice'
+                ? 'Transcribing and analyzing...'
+                : analyzingSource === 'vision'
+                ? 'AI is analyzing the image...'
+                : 'AI is calculating nutrients...'}
+            </Text>
           </View>
         )}
 
@@ -374,6 +507,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   toolBtnActive: { backgroundColor: theme.colors.danger },
+  thumbnailRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16, padding: 12,
+    backgroundColor: theme.colors.background, borderRadius: 16,
+  },
+  thumbnailImage: { width: 56, height: 56, borderRadius: 12 },
+  thumbnailClear: {
+    width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center', justifyContent: 'center',
+  },
   analyzeBtn: {
     backgroundColor: theme.colors.primary,
     borderRadius: 18,
