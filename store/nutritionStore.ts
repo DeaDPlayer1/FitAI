@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { scaleNutrition, type ServingUnit, type BaseNutrition } from '@/lib/nutritionScale';
 
 const NUTRITION_CACHE_KEY = '@pulse_ai_nutrition_cache';
 
@@ -22,6 +23,31 @@ export interface MealCategory {
   iconColor: string;
 }
 
+/**
+ * Nutrition scaling fields stored alongside each food log entry.
+ * Enables dynamic recalculation when the user changes serving size.
+ */
+export interface ServingScaleFields {
+  /** Per-unit base values (e.g. per 100g, per serving, per can) */
+  baseCalories: number;
+  baseProtein: number;
+  baseCarbs: number;
+  baseFat: number;
+  baseFiber: number;
+  baseSugar: number;
+  baseSodium: number;
+  /** The reference serving value these bases correspond to */
+  baseServingValue: number;
+  /** Unit of baseServingValue */
+  baseServingUnit: ServingUnit;
+  /** Human-readable base serving description */
+  baseServingLabel: string;
+  /** Current scaled serving quantity */
+  servingQuantity: number;
+  /** Current serving unit */
+  servingUnit: ServingUnit;
+}
+
 // FIX[3]: UI should be driven by DB rows; each row is a food log entry (meal_logs).
 export interface FoodLogEntry {
   id: string;
@@ -31,7 +57,12 @@ export interface FoodLogEntry {
   protein_g: number;
   carbs_g: number;
   fat_g: number;
+  fiber_g?: number;
+  sugar_g?: number;
+  sodium_g?: number;
   loggedAt: string;
+  /** Dynamic serving scale fields — present for all new entries */
+  servingScale?: ServingScaleFields;
 }
 
 interface NutritionState {
@@ -47,6 +78,12 @@ interface NutritionState {
   clearToday: () => void;
   addMealType: (category: MealCategory) => void;
   removeMealType: (id: string) => void;
+
+  /**
+   * Update serving size for a logged food entry.
+   * Recalculates all macros using the centralized scaling engine.
+   */
+  updateFoodServing: (id: string, quantity: number, unit: ServingUnit) => void;
 
   // Computed helpers
   getTotalCalories: () => number;
@@ -72,6 +109,46 @@ export const useNutritionStore = create<NutritionState>((set, get) => ({
     set((state) => ({
       todayFoodLogs: state.todayFoodLogs.filter((m) => m.id !== id),
     })),
+
+  updateFoodServing: (id, quantity, unit) =>
+    set((state) => {
+      const updated = state.todayFoodLogs.map((entry) => {
+        if (entry.id !== id || !entry.servingScale) return entry;
+
+        const { servingScale } = entry;
+        const base: BaseNutrition = {
+          baseServingValue: servingScale.baseServingValue,
+          baseServingUnit: servingScale.baseServingUnit,
+          baseServingLabel: servingScale.baseServingLabel,
+          calories: servingScale.baseCalories,
+          protein_g: servingScale.baseProtein,
+          carbs_g: servingScale.baseCarbs,
+          fats_g: servingScale.baseFat,
+          fiber_g: servingScale.baseFiber,
+          sugar_g: servingScale.baseSugar,
+          sodium_g: servingScale.baseSodium,
+        };
+
+        const scaled = scaleNutrition({ base, quantity, unit });
+
+        return {
+          ...entry,
+          calories: scaled.calories,
+          protein_g: scaled.protein_g,
+          carbs_g: scaled.carbs_g,
+          fat_g: scaled.fats_g,
+          fiber_g: scaled.fiber_g,
+          sugar_g: scaled.sugar_g,
+          sodium_g: scaled.sodium_g,
+          servingScale: {
+            ...servingScale,
+            servingQuantity: quantity,
+            servingUnit: unit,
+          },
+        };
+      });
+      return { todayFoodLogs: updated };
+    }),
 
   setFoodLogs: (todayFoodLogs) => set({ todayFoodLogs }),
   setCalorieGoal: (calorieGoal) => set({ calorieGoal }),

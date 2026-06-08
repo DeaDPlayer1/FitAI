@@ -113,7 +113,7 @@ const CalRemainingRing = memo(({ remaining, goal }: CalRingProps) => {
       </Svg>
       <View style={styles.ringTextBox}>
         <Text style={styles.ringNumber}>{Math.round(remaining)}</Text>
-        <Text style={styles.ringLabel}>left</Text>
+        <Text style={styles.ringLabel}>{remaining < 0 ? 'over' : 'left'}</Text>
       </View>
     </View>
   );
@@ -141,7 +141,7 @@ const NutritionAnalyticsCardComponent = ({
   fat,
   fatGoal,
 }: NutritionAnalyticsCardProps) => {
-  const remaining = useMemo(() => Math.max(calorieGoal - caloriesLogged, 0), [calorieGoal, caloriesLogged]);
+  const remaining = useMemo(() => calorieGoal - caloriesLogged, [calorieGoal, caloriesLogged]);
   const percentConsumed = useMemo(
     () => Math.min(Math.round((caloriesLogged / Math.max(calorieGoal, 1)) * 100), 100),
     [caloriesLogged, calorieGoal]

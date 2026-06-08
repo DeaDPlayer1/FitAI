@@ -67,6 +67,11 @@ async function initTables() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       food_name TEXT UNIQUE NOT NULL,
       aliases TEXT DEFAULT '[]',
+      barcode TEXT,
+      brand TEXT DEFAULT '',
+      image_url TEXT,
+      sugar_per_100g REAL DEFAULT 0,
+      sodium_per_100g REAL DEFAULT 0,
       calories_per_100g REAL NOT NULL,
       protein_per_100g REAL NOT NULL,
       carbs_per_100g REAL NOT NULL,
@@ -76,7 +81,23 @@ async function initTables() {
       serving_grams REAL DEFAULT 100,
       source TEXT DEFAULT 'bundled'
     );
-  `);
+    `);
+  // ── Migrate existing food_cache table to add barcode columns ──
+  try {
+    await db.execAsync(`ALTER TABLE food_cache ADD COLUMN barcode TEXT`);
+  } catch {}
+  try {
+    await db.execAsync(`ALTER TABLE food_cache ADD COLUMN brand TEXT DEFAULT ''`);
+  } catch {}
+  try {
+    await db.execAsync(`ALTER TABLE food_cache ADD COLUMN image_url TEXT`);
+  } catch {}
+  try {
+    await db.execAsync(`ALTER TABLE food_cache ADD COLUMN sugar_per_100g REAL DEFAULT 0`);
+  } catch {}
+  try {
+    await db.execAsync(`ALTER TABLE food_cache ADD COLUMN sodium_per_100g REAL DEFAULT 0`);
+  } catch {}
 }
 
 export interface Conversation {

@@ -207,9 +207,6 @@ export const useWorkoutTrackingStore = create<WorkoutTrackingState>((set, get) =
           if (ex.id === exId) found = true;
         }
       }
-      if (restTime > 0) {
-        get().startRestTimer(restTime);
-      }
     }
   },
 

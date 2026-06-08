@@ -165,8 +165,31 @@ export async function signInUser(
   if (!data.user) throw new Error('Sign in failed.');
 
   // FIX[2]: Attach auth email; profiles schema doesn't store it.
-  const profile = await getCurrentUserProfile(data.user.id);
-  return { ...profile, email: data.user.email || email };
+  try {
+    const profile = await getCurrentUserProfile(data.user.id);
+    return { ...profile, email: data.user.email || email };
+  } catch (profileErr) {
+    console.warn('[signInUser] Profile fetch failed, using auth fallback:', profileErr);
+    return {
+      id: data.user.id,
+      name: data.user.user_metadata?.name || 'User',
+      email: data.user.email || email,
+      avatar_url: null,
+      created_at: new Date().toISOString(),
+      onboarding_complete: false,
+      app_mode: 'normal',
+      dark_mode: false,
+      health_profile: defaultHealthProfile,
+      goals: {
+        calories: 1800,
+        protein: 150,
+        carbs: 200,
+        fat: 60,
+        water: 8,
+        steps: 10000,
+      },
+    };
+  }
 }
 
 /**
@@ -209,7 +232,6 @@ export async function signOutUser(): Promise<void> {
  * Fetch the profile row for a given uid.
  */
 export async function getCurrentUserProfile(uid: string): Promise<UserProfile> {
-  // FIX[2]: DB schema is flat (profiles.* columns). Map to app's nested health_profile shape.
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
@@ -222,7 +244,7 @@ export async function getCurrentUserProfile(uid: string): Promise<UserProfile> {
   return {
     id: data.id,
     name: data.full_name || 'User',
-    email: '', // FIX[2]: email is auth-side; UI generally uses auth email from session/userStore.
+    email: '',
     avatar_url: null,
     created_at: data.updated_at || new Date().toISOString(),
     onboarding_complete: !!data.onboarding_complete,

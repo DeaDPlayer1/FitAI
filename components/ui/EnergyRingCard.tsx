@@ -71,8 +71,8 @@ export function EnergyRingCard({ consumed, remaining, progress, stats }: EnergyR
             duration={1500}
           >
             <View style={styles.ringCenter}>
-              <Text style={styles.ringKcal}>{remaining.toLocaleString()}</Text>
-              <Text style={styles.ringSub}>kcal left</Text>
+              <Text style={[styles.ringKcal, remaining < 0 && { color: '#FF6B6B' }]}>{remaining.toLocaleString()}</Text>
+              <Text style={styles.ringSub}>{remaining < 0 ? 'kcal over' : 'kcal left'}</Text>
             </View>
           </ProgressRing>
         </View>

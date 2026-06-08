@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   TextInput, Alert, Image, KeyboardAvoidingView, Platform,
@@ -12,6 +12,11 @@ import { supabase } from '@/lib/supabase';
 import { syncUserData } from '@/lib/sync';
 import { getDb } from '@/lib/db';
 import type { NutritionResult } from '@/lib/nutritionAI';
+import {
+  estimateBaseNutrition, parseServingString,
+  type ScaledNutrition, type BaseNutrition,
+} from '@/lib/nutritionScale';
+import ServingSizeEditor from '@/components/ui/ServingSizeEditor';
 import { useToast } from '@/components/ui/ToastNotification';
 
 export interface FoodConfirmParams {
@@ -44,16 +49,42 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
   const { imageUri, aiDescription, voiceTranscript, nutrition, inputType } = params;
 
   const [foodName, setFoodName] = useState(nutrition.name || '');
-  const [serving, setServing] = useState(nutrition.serving || '1 serving');
-  const [calories, setCalories] = useState(String(nutrition.calories || 0));
-  const [protein, setProtein] = useState(String(nutrition.protein || 0));
-  const [carbs, setCarbs] = useState(String(nutrition.carbs || 0));
-  const [fat, setFat] = useState(String(nutrition.fat || 0));
-  const [fiber, setFiber] = useState(String(nutrition.fiber || 0));
+  const [baseNutrition, setBaseNutrition] = useState<BaseNutrition>(() => {
+    const parsed = parseServingString(nutrition.serving);
+    const gramEstimate = parsed?.unit === 'g' ? parsed.value : 100;
+    return {
+      baseServingValue: gramEstimate,
+      baseServingUnit: (parsed?.unit as any) || 'g',
+      baseServingLabel: nutrition.serving || `${gramEstimate}g`,
+      calories: nutrition.calories || 0,
+      protein_g: nutrition.protein || 0,
+      carbs_g: nutrition.carbs || 0,
+      fats_g: nutrition.fat || 0,
+      fiber_g: nutrition.fiber || 0,
+      sugar_g: 0,
+      sodium_g: 0,
+    };
+  });
+  const [scaled, setScaled] = useState<ScaledNutrition>(() => ({
+    calories: nutrition.calories || 0,
+    protein_g: nutrition.protein || 0,
+    carbs_g: nutrition.carbs || 0,
+    fats_g: nutrition.fat || 0,
+    fiber_g: nutrition.fiber || 0,
+    sugar_g: 0,
+    sodium_g: 0,
+    servingLabel: nutrition.serving || '1 serving',
+    servingQuantity: parseServingString(nutrition.serving)?.value || 1,
+    servingUnit: (parseServingString(nutrition.serving)?.unit) || 'serving',
+  }));
   const [mealType, setMealType] = useState(getMealTypeByTime());
   const [saving, setSaving] = useState(false);
 
   const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
+
+  const handleNutritionChange = useCallback((s: ScaledNutrition) => {
+    setScaled(s);
+  }, []);
 
   const handleLogFood = async () => {
     if (!user?.id) {
@@ -72,10 +103,10 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
       const { error } = await supabase.from('meal_logs').insert({
         user_id: userId,
         food_name: foodName.trim(),
-        calories: parseFloat(calories) || 0,
-        protein_g: parseFloat(protein) || 0,
-        carbs_g: parseFloat(carbs) || 0,
-        fat_g: parseFloat(fat) || 0,
+        calories: scaled.calories,
+        protein_g: scaled.protein_g,
+        carbs_g: scaled.carbs_g,
+        fat_g: scaled.fats_g,
         meal_type: mealType,
         logged_at: new Date().toISOString(),
       });
@@ -90,9 +121,9 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
            (food_name, aliases, calories_per_100g, protein_per_100g, carbs_per_100g, fat_per_100g, fiber_per_100g, serving_size, serving_grams, source)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           foodName.trim().toLowerCase(), '[]',
-          parseFloat(calories) || 0, parseFloat(protein) || 0,
-          parseFloat(carbs) || 0, parseFloat(fat) || 0, parseFloat(fiber) || 0,
-          serving, 100, 'ai'
+          baseNutrition.calories, baseNutrition.protein_g,
+          baseNutrition.carbs_g, baseNutrition.fats_g, baseNutrition.fiber_g,
+          baseNutrition.baseServingLabel, baseNutrition.baseServingValue, 'ai'
         );
 
         const existing = await db.getFirstAsync<any>(
@@ -110,9 +141,10 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
              (user_id, food_name, aliases, calories, protein, carbs, fat, fiber, serving_size, serving_grams, log_count, last_logged, source)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
             userId, foodName.trim().toLowerCase(), '[]',
-            parseFloat(calories) || 0, parseFloat(protein) || 0,
-            parseFloat(carbs) || 0, parseFloat(fat) || 0, parseFloat(fiber) || 0,
-            serving, 100, new Date().toISOString(), 'ai'
+            scaled.calories, scaled.protein_g,
+            scaled.carbs_g, scaled.fats_g, scaled.fiber_g,
+            scaled.servingLabel, scaled.servingQuantity,
+            new Date().toISOString(), 'ai'
           );
         }
       } catch (dbErr) {
@@ -127,24 +159,6 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
       setSaving(false);
     }
   };
-
-  const NutritionCell = ({
-    label, value, onChangeText, unit, color,
-  }: {
-    label: string; value: string; onChangeText: (v: string) => void; unit: string; color: string;
-  }) => (
-    <View style={[s.nutritionCell, { borderColor: color + '30' }]}>
-      <Text style={s.cellLabel}>{label}</Text>
-      <TextInput
-        style={[s.cellInput, { color }]}
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType="numeric"
-        selectTextOnFocus
-      />
-      <Text style={s.cellUnit}>{unit}</Text>
-    </View>
-  );
 
   return (
     <KeyboardAvoidingView
@@ -187,27 +201,18 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
             placeholder="e.g. Chicken Salad"
             placeholderTextColor={theme.colors.textMuted}
           />
-
-          <Text style={s.fieldLabel}>Serving Size</Text>
-          <TextInput
-            style={s.textInput}
-            value={serving}
-            onChangeText={setServing}
-            placeholder="e.g. 1 bowl"
-            placeholderTextColor={theme.colors.textMuted}
-          />
         </View>
 
+        {/* ── Dynamic Serving Editor ── */}
         <View style={s.card}>
-          <Text style={s.fieldLabel}>Nutrition (tap to edit)</Text>
-          <View style={s.nutritionGrid}>
-            <NutritionCell label="Calories" value={calories} onChangeText={setCalories} unit="kcal" color={theme.colors.warning} />
-            <NutritionCell label="Protein" value={protein} onChangeText={setProtein} unit="g" color="#FB7185" />
-            <NutritionCell label="Carbs" value={carbs} onChangeText={setCarbs} unit="g" color="#F59E0B" />
-            <NutritionCell label="Fat" value={fat} onChangeText={setFat} unit="g" color="#3B82F6" />
-            <NutritionCell label="Fiber" value={fiber} onChangeText={setFiber} unit="g" color="#22C55E" />
-            <View style={s.nutritionCell} />
-          </View>
+          <Text style={s.fieldLabel}>Serving Size</Text>
+          <ServingSizeEditor
+            baseNutrition={baseNutrition}
+            isPackaged={false}
+            initialQuantity={scaled.servingQuantity}
+            initialUnit={scaled.servingUnit}
+            onNutritionChange={handleNutritionChange}
+          />
         </View>
 
         <View style={s.card}>
@@ -252,7 +257,7 @@ export default function FoodConfirmScreen({ params, onClose }: Props) {
             ) : (
               <>
                 <Feather name="check" size={18} color="#FFFFFF" />
-                <Text style={s.logBtnText}>Log Food</Text>
+                <Text style={s.logBtnText}>Log {scaled.calories} kcal</Text>
               </>
             )}
           </LinearGradient>
@@ -298,19 +303,8 @@ const s = {
   fieldLabel: { fontSize: 14, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 8 } as const,
   textInput: {
     backgroundColor: theme.colors.background, borderRadius: 14, padding: 14,
-    fontSize: 16, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 16,
+    fontSize: 16, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 0,
   } as const,
-  nutritionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 } as const,
-  nutritionCell: {
-    width: '47%' as any, borderRadius: 14, padding: 14, borderWidth: 1,
-    borderColor: theme.colors.border.soft, gap: 4, backgroundColor: theme.colors.background,
-  },
-  cellLabel: {
-    fontSize: 11, fontWeight: '600', color: theme.colors.text.muted,
-    textTransform: 'uppercase', letterSpacing: 0.5,
-  } as const,
-  cellInput: { fontSize: 20, fontWeight: '800', padding: 0, margin: 0 } as const,
-  cellUnit: { fontSize: 11, fontWeight: '600', color: theme.colors.text.muted } as const,
   mealTypeRow: { flexDirection: 'row', gap: 8 } as const,
   mealTypeBtn: {
     flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: theme.colors.background,

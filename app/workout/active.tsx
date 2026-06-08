@@ -5,7 +5,6 @@ import { useWorkoutTrackingStore } from '../../store/workoutTrackingStore';
 import { useUserStore } from '../../store/userStore';
 import { WorkoutService } from '../../lib/workoutService';
 import ExerciseCard from '../../components/workout/ExerciseCard';
-import RestTimerOverlay from '../../components/workout/RestTimerOverlay';
 import { Feather } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { theme } from '../../constants/theme';
@@ -16,7 +15,7 @@ export default function ActiveWorkoutScreen() {
   const router = useRouter();
   const { templateId } = useLocalSearchParams();
   const { user } = useUserStore();
-  const { workoutName, exercises, startWorkout, endWorkout, stopElapsedTimer, clearRestTimer, getElapsedFormatted } = useWorkoutTrackingStore();
+  const { workoutName, exercises, startWorkout, endWorkout, stopElapsedTimer, getElapsedFormatted } = useWorkoutTrackingStore();
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newExName, setNewExName] = useState('');
@@ -31,7 +30,6 @@ export default function ActiveWorkoutScreen() {
     }
     return () => {
       stopElapsedTimer();
-      clearRestTimer();
     };
   }, [templateId]);
 
@@ -255,7 +253,6 @@ export default function ActiveWorkoutScreen() {
           </View>
         </Modal>
 
-        <RestTimerOverlay />
       </SafeAreaView>
     </Animated.View>
   );

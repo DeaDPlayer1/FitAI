@@ -767,19 +767,26 @@ export default function WorkoutScreen() {
     try {
       const now = new Date();
       let startDate: Date;
-      let endDate = new Date(now);
+      let endDate: Date;
 
       if (calRange === 'week') {
         const day = now.getDay();
         const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-        startDate = new Date(now.setDate(diff));
+        startDate = new Date(now.getFullYear(), now.getMonth(), diff);
         startDate.setHours(0, 0, 0, 0);
         endDate = new Date(startDate);
         endDate.setDate(endDate.getDate() + 6);
+        endDate.setHours(23, 59, 59, 999);
       } else if (calRange === '4W') {
-        startDate = new Date(now); startDate.setDate(startDate.getDate() - 27);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        startDate = new Date(endDate);
+        startDate.setDate(startDate.getDate() - 27);
+        startDate.setHours(0, 0, 0, 0);
       } else {
-        startDate = new Date(now); startDate.setMonth(startDate.getMonth() - 3);
+        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        startDate = new Date(endDate);
+        startDate.setMonth(startDate.getMonth() - 3);
+        startDate.setHours(0, 0, 0, 0);
       }
 
       const { data, error } = await supabase
@@ -940,12 +947,33 @@ export default function WorkoutScreen() {
     if (isNaN(w) || w <= 0) return;
     const kgVal = weightUnit === 'lbs' ? Math.round(w / 2.20462 * 100) / 100 : Math.round(w * 100) / 100;
     try {
-      const { error: logError } = await supabase.from('weight_logs').insert({
-        user_id: userId,
-        weight_kg: kgVal,
-        logged_at: new Date().toISOString(),
-      });
-      if (logError) throw logError;
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+
+      const { data: existing } = await supabase
+        .from('weight_logs')
+        .select('id')
+        .eq('user_id', userId)
+        .gte('logged_at', todayStart.toISOString())
+        .lte('logged_at', todayEnd.toISOString())
+        .maybeSingle();
+
+      if (existing) {
+        const { error: updateError } = await supabase
+          .from('weight_logs')
+          .update({ weight_kg: kgVal, logged_at: new Date().toISOString() })
+          .eq('id', existing.id);
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await supabase.from('weight_logs').insert({
+          user_id: userId,
+          weight_kg: kgVal,
+          logged_at: new Date().toISOString(),
+        });
+        if (insertError) throw insertError;
+      }
 
       const { error: profileError } = await supabase
         .from('profiles')
@@ -973,6 +1001,16 @@ export default function WorkoutScreen() {
     if (weightData.length === 0) return null;
     return weightData[weightData.length - 1].weight;
   }, [weightData]);
+
+  const todayWeightEntry = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return weightData.find(d => d.date === today) || null;
+  }, [weightData]);
+
+  const hasLoggedWeightToday = !!todayWeightEntry;
+
+  const weightModalTitle = hasLoggedWeightToday ? 'Update Today\'s Weight' : 'Log Today\'s Weight';
+  const weightSaveLabel = hasLoggedWeightToday ? 'Update Weight' : 'Save Weight';
 
   // ── Computed insights ──
   const activeDaysThisWeek = useMemo(() => {
@@ -1250,12 +1288,26 @@ export default function WorkoutScreen() {
                       />
                     </View>
                   )}
-                  <TouchableOpacity style={logWeightSt.btn} onPress={() => setShowWeightSheet(true)} activeOpacity={0.8}>
-                    <LinearGradient colors={['rgba(106,73,250,0.12)', 'rgba(106,73,250,0.04)']} style={logWeightSt.grad}>
-                      <Feather name="plus" size={15} color={PURPLE} />
-                      <Text style={logWeightSt.text}>Log Today's Weight</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={logWeightSt.btn}
+                      onPress={() => {
+                        if (todayWeightEntry) {
+                          const display = weightUnit === 'lbs'
+                            ? (todayWeightEntry.weight * 2.20462).toFixed(1)
+                            : todayWeightEntry.weight.toFixed(1);
+                          setWeightInput(display);
+                        } else {
+                          setWeightInput('');
+                        }
+                        setShowWeightSheet(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <LinearGradient colors={['rgba(106,73,250,0.12)', 'rgba(106,73,250,0.04)']} style={logWeightSt.grad}>
+                        <Feather name={hasLoggedWeightToday ? "edit-2" : "plus"} size={15} color={PURPLE} />
+                        <Text style={logWeightSt.text}>{hasLoggedWeightToday ? "Update Today's Weight" : "Log Today's Weight"}</Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
                 </>
               )}
             </View>
@@ -1371,7 +1423,7 @@ export default function WorkoutScreen() {
         >
           <TouchableOpacity activeOpacity={1} onPress={() => {}} style={modalSt.sheet}>
             <View style={modalSt.handle} />
-            <Text style={modalSt.title}>Log Today's Weight</Text>
+            <Text style={modalSt.title}>{weightModalTitle}</Text>
 
             <View style={modalSt.inputRow}>
               <TextInput
@@ -1397,7 +1449,7 @@ export default function WorkoutScreen() {
               activeOpacity={0.8}
             >
               <LinearGradient colors={[PURPLE, '#5A3DE0']} style={modalSt.saveGrad}>
-                <Text style={modalSt.saveText}>Save Weight</Text>
+                <Text style={modalSt.saveText}>{weightSaveLabel}</Text>
               </LinearGradient>
             </TouchableOpacity>
           </TouchableOpacity>

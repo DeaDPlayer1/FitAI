@@ -49,14 +49,33 @@ function isTokenExpiringSoon(
   return expMs - Date.now() < minRemainingMs;
 }
 
+const REFRESH_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('Token refresh timed out')), ms)
+    ),
+  ]);
+}
+
 // Force a token refresh and persist the new session to both stores
 async function refreshAndPersistSession(): Promise<Session | null> {
-  const { data, error } = await supabase.auth.refreshSession();
-  if (error || !data.session) {
-    console.warn('[tokenManager] Refresh failed:', error?.message);
+  try {
+    const { data, error } = await withTimeout(
+      supabase.auth.refreshSession(),
+      REFRESH_TIMEOUT_MS
+    );
+    if (error || !data.session) {
+      console.warn('[tokenManager] Refresh failed:', error?.message);
+      return null;
+    }
+    return data.session;
+  } catch (err: any) {
+    console.warn('[tokenManager] Refresh error:', err?.message || err);
     return null;
   }
-  return data.session;
 }
 
 // Check current token and refresh if <5 min remaining

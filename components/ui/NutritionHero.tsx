@@ -59,10 +59,6 @@ export function NutritionHero({ dateLabel, aiMessage }: NutritionHeroProps) {
             <Text style={styles.title}>Nutrition</Text>
             <Text style={styles.date}>{dateLabel}</Text>
           </View>
-          <TouchableOpacity style={styles.datePill} activeOpacity={0.8}>
-            <Feather name="calendar" size={13} color="#FFFFFF" />
-            <Text style={styles.datePillText}>Today</Text>
-          </TouchableOpacity>
         </View>
 
         {aiMessage && (

@@ -406,7 +406,7 @@ ${(ctx.memory as any)?.contextHistory || ''}` : '';
         style={[styles.headerHero, { paddingTop: insets.top + 12 }]}
       >
         <View style={styles.headerTopRow}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.headerBack} activeOpacity={0.7}>
+          <TouchableOpacity onPress={() => router.navigate('/(ai-trainer)')} style={styles.headerBack} activeOpacity={0.7}>
             <Feather name="chevron-left" size={22} color="#FFFFFF" />
           </TouchableOpacity>
           <View style={styles.headerCenter}>

@@ -21,12 +21,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { signInUser } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
+import { useUserStore } from '@/store/userStore';
+import { useModeStore } from '@/store/modeStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { theme } from '@/constants/theme';
 import * as Haptics from 'expo-haptics';
 
 const { width, height } = Dimensions.get('window');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const HAS_ACCOUNT_KEY = '@has_account';
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 function checkRateLimit(key: string, maxAttempts = 5, windowMs = 30000): boolean {
@@ -115,23 +119,26 @@ export default function LoginScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      // Timeout the Supabase call so loading never hangs forever
-      await Promise.race([
+      const profile = await Promise.race([
         signInUser(trimmedEmail, password),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Request timed out. Check your connection.')), 15000)
+          setTimeout(() => reject(new Error('Request timed out. Check your connection.')), 30000)
         ),
       ]);
+      // Update auth state immediately so route guard can navigate without
+      // waiting on onAuthStateChange (which can lag behind signInWithPassword).
+      useUserStore.getState().setUser(profile);
+      useModeStore.getState().setMode(profile.app_mode || 'normal');
+      await AsyncStorage.setItem(HAS_ACCOUNT_KEY, 'true').catch(() => {});
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // RULE: Don't call setUser or navigate here — the onAuthStateChange
-      // listener in _layout.tsx handles state updates, and the route guard
-      // handles navigation. This prevents race conditions between the
-      // login screen and the auth system.
+      // Navigation is handled by the route guard in _layout.tsx.
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       const msg = err.message || 'Login failed.';
       if (msg.includes('Invalid login')) setError('Wrong email or password.');
       else if (msg.includes('User not found')) setError('User not found.');
+      else if (msg.includes('aborted') || msg.includes('timeout') || msg.includes('timed out'))
+        setError('Connection timed out. Check your internet and try again.');
       else setError(msg);
     } finally {
       setLoading(false);

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import {
+  View, Text, StyleSheet, TouchableOpacity, Modal,
+} from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import Animated, {
   useSharedValue,
@@ -10,6 +12,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
+import { useNutritionStore } from '@/store/nutritionStore';
+import {
+  type ServingUnit, type BaseNutrition,
+} from '@/lib/nutritionScale';
+import ServingSizeEditor from '@/components/ui/ServingSizeEditor';
 
 interface FoodItem {
   id: string;
@@ -18,6 +25,20 @@ interface FoodItem {
   protein_g: number;
   carbs_g: number;
   fat_g: number;
+  servingScale?: {
+    baseCalories: number;
+    baseProtein: number;
+    baseCarbs: number;
+    baseFat: number;
+    baseFiber: number;
+    baseSugar: number;
+    baseSodium: number;
+    baseServingValue: number;
+    baseServingUnit: ServingUnit;
+    baseServingLabel: string;
+    servingQuantity: number;
+    servingUnit: ServingUnit;
+  };
 }
 
 interface MealCardData {
@@ -30,6 +51,7 @@ interface MealCardData {
   onAddFood: () => void;
   onRemoveFood: (logId: string) => void;
   removingId?: string | null;
+  onEditServing?: (logId: string) => void;
 }
 
 interface MealTimelineProps {
@@ -38,7 +60,10 @@ interface MealTimelineProps {
 
 function MealCard({ meal, index }: { meal: MealCardData; index: number }) {
   const [expanded, setExpanded] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const scale = useSharedValue(1);
+  const updateFoodServing = useNutritionStore((s) => s.updateFoodServing);
+
   const mealCal = meal.items.reduce((s, l) => s + (l.calories || 0), 0);
   const mealProtein = meal.items.reduce((s, l) => s + (l.protein_g || 0), 0);
   const mealCarbs = meal.items.reduce((s, l) => s + (l.carbs_g || 0), 0);
@@ -53,6 +78,14 @@ function MealCard({ meal, index }: { meal: MealCardData; index: number }) {
   const cardAnim = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
+
+  const editingEntry = editingId
+    ? meal.items.find((i) => i.id === editingId)
+    : null;
+
+  const handleServingChange = (foodId: string, quantity: number, unit: ServingUnit) => {
+    updateFoodServing(foodId, quantity, unit);
+  };
 
   return (
     <Animated.View
@@ -125,6 +158,15 @@ function MealCard({ meal, index }: { meal: MealCardData; index: number }) {
                   </View>
                   <View style={styles.foodRightInner}>
                     <Text style={styles.foodCal}>{item.calories} kcal</Text>
+                    {item.servingScale && (
+                      <TouchableOpacity
+                        onPress={() => setEditingId(item.id)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={styles.editBtn}
+                      >
+                        <Feather name="edit-2" size={13} color={theme.colors.primary} />
+                      </TouchableOpacity>
+                    )}
                     <TouchableOpacity
                       onPress={() => meal.onRemoveFood(item.id)}
                       disabled={meal.removingId === item.id}
@@ -146,6 +188,60 @@ function MealCard({ meal, index }: { meal: MealCardData; index: number }) {
           </Animated.View>
         )}
       </TouchableOpacity>
+
+      {/* ── Serving Editor Modal ── */}
+      <Modal
+        visible={editingId !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEditingId(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Serving</Text>
+              <TouchableOpacity onPress={() => setEditingId(null)}>
+                <Feather name="x" size={22} color={theme.colors.text.primary} />
+              </TouchableOpacity>
+            </View>
+
+            {editingEntry?.servingScale && (
+              <ServingSizeEditor
+                baseNutrition={{
+                  baseServingValue: editingEntry.servingScale.baseServingValue,
+                  baseServingUnit: editingEntry.servingScale.baseServingUnit,
+                  baseServingLabel: editingEntry.servingScale.baseServingLabel,
+                  calories: editingEntry.servingScale.baseCalories,
+                  protein_g: editingEntry.servingScale.baseProtein,
+                  carbs_g: editingEntry.servingScale.baseCarbs,
+                  fats_g: editingEntry.servingScale.baseFat,
+                  fiber_g: editingEntry.servingScale.baseFiber,
+                  sugar_g: editingEntry.servingScale.baseSugar,
+                  sodium_g: editingEntry.servingScale.baseSodium,
+                }}
+                isPackaged={false}
+                initialQuantity={editingEntry.servingScale.servingQuantity}
+                initialUnit={editingEntry.servingScale.servingUnit}
+                onNutritionChange={(scaled) => {
+                  handleServingChange(
+                    editingEntry.id,
+                    scaled.servingQuantity,
+                    scaled.servingUnit,
+                  );
+                }}
+              />
+            )}
+
+            <TouchableOpacity
+              style={styles.doneBtn}
+              onPress={() => setEditingId(null)}
+            >
+              <Text style={styles.doneBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </Animated.View>
   );
 }
@@ -286,6 +382,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: theme.colors.text.secondary,
   },
+  editBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: theme.colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   emptyMeal: {
     textAlign: 'center',
     fontSize: theme.font.size.caption,
@@ -306,6 +410,50 @@ const styles = StyleSheet.create({
     fontSize: theme.font.size.caption,
     fontWeight: '700',
     color: theme.colors.primary,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: theme.colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.colors.border.soft,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: theme.colors.text.primary,
+  },
+  doneBtn: {
+    marginTop: 20,
+    paddingVertical: 16,
+    borderRadius: 16,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+  },
+  doneBtnText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });
 

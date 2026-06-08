@@ -28,21 +28,37 @@ export default function LogWeightModal() {
       const userId = sessionData.session?.user?.id;
       if (!userId) throw new Error('Not authenticated. Please log in again.');
 
-      const payload = {
-        user_id: userId,
-        weight_kg: parseFloat(weight), // FIX[1]: match new DB schema
-        logged_at: new Date().toISOString(),
-      };
+      const kgVal = parseFloat(weight);
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayEnd = new Date(todayStart);
+      todayEnd.setDate(todayEnd.getDate() + 1);
 
-      const { data, error } = await supabase
+      const { data: existing } = await supabase
         .from('weight_logs')
-        .insert(payload)
-        .select('id, user_id, weight_kg, logged_at')
-        .single();
+        .select('id')
+        .eq('user_id', userId)
+        .gte('logged_at', todayStart.toISOString())
+        .lt('logged_at', todayEnd.toISOString())
+        .maybeSingle();
 
-      if (__DEV__) console.log('[log-weight] insert raw result:', { data, error });
-      if (error) throw error;
-      Alert.alert('✅ Logged!', `Weight: ${weight} kg`);
+      if (existing) {
+        const { error: updateError } = await supabase
+          .from('weight_logs')
+          .update({ weight_kg: kgVal, logged_at: now.toISOString() })
+          .eq('id', existing.id);
+        if (updateError) throw updateError;
+        Alert.alert('✅ Updated!', `Weight: ${weight} kg`);
+      } else {
+        const { error: insertError } = await supabase
+          .from('weight_logs')
+          .insert({ user_id: userId, weight_kg: kgVal, logged_at: now.toISOString() })
+          .select('id, user_id, weight_kg, logged_at')
+          .single();
+        if (insertError) throw insertError;
+        Alert.alert('✅ Logged!', `Weight: ${weight} kg`);
+      }
+
       useTabBarStore.getState().setVisible(true);
       router.replace('/(tabs)' as any);
     } catch (err: any) {

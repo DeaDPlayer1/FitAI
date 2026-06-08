@@ -349,7 +349,7 @@ export default function HomeScreen() {
     } catch (e) { /* silent */ }
   }, []);
 
-  const calorieRemaining = Math.max(0, calorieGoal - todayCalories);
+  const calorieRemaining = calorieGoal - todayCalories;
   const userName = profile?.full_name?.split(' ')[0] || 'there';
   const greeting = getTimeGreeting();
 

@@ -103,6 +103,7 @@ export default function RootLayout() {
   // Track whether initial auth bootstrap has finished
   const _authInitialized = useRef(false);
   const _authRetryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const _safetyTimedOut = useRef(false);
 
   // Listen to Supabase auth state changes
   useEffect(() => {
@@ -178,13 +179,16 @@ export default function RootLayout() {
       }
     };
 
-    // SAFETY FALLBACK: If checkSession hangs, force booting to false after 20s.
+    // SAFETY FALLBACK: If checkSession hangs, force booting to false after 30s.
     const safetyTimeout = setTimeout(() => {
       console.warn('[auth-bootstrap] Safety timeout reached. Forcing boot.');
       setLoading(false);
       setBooting(false);
       _authInitialized.current = true;
-    }, 20000);
+      // Mark that the safety timeout already handled boot — prevents
+      // a stale checkSession resolution from clearing an authenticated user later.
+      _safetyTimedOut.current = true;
+    }, 30000);
 
     // Two-phase boot:
     //   Phase 1 — Read session from local storage (fast, no network).
@@ -212,23 +216,41 @@ export default function RootLayout() {
         const { data: localSession } = await supabase.auth.getSession();
 
         if (localSession?.session) {
-          // Phase 1: Immediately hydrate UI with local session
-          // Phase 2 (background): Verify token freshness before first render completes
-          const freshSession = await ensureFreshToken().catch(() => null);
-          const sessionToUse = freshSession ? await supabase.auth.getSession().then(r => r.data.session).catch(() => localSession.session) : localSession.session;
-          await handleAuthChange(sessionToUse || localSession.session);
+          // Phase 1: Hydrate UI immediately from stored session (no network wait)
+          await handleAuthChange(localSession.session);
+          // Phase 2: Refresh token in background — never block boot or login
+          ensureFreshToken()
+            .then((ok) => {
+              if (!ok) return;
+              return supabase.auth.getSession();
+            })
+            .then((result) => {
+              const session = result?.data?.session;
+              if (session) handleAuthChange(session);
+            })
+            .catch(() => {});
         } else {
-          clearLocalStores();
-          clearUser();
+          // Guard: don't clear if user already logged in via onAuthStateChange while we were blocked
+          if (!useUserStore.getState().isAuthenticated) {
+            clearLocalStores();
+            clearUser();
+          }
         }
       } catch (err) {
         console.error('[auth-bootstrap] checkSession error:', err);
-        clearLocalStores();
-        clearUser();
+        // Guard: don't clear if user already logged in via onAuthStateChange while we were blocked
+        if (!useUserStore.getState().isAuthenticated) {
+          clearLocalStores();
+          clearUser();
+        }
       } finally {
         clearTimeout(safetyTimeout);
-        setLoading(false);
-        setBooting(false);
+        // Don't change auth-related state if safety timeout already forced boot
+        // AND user has since authenticated (avoids race condition)
+        if (!_safetyTimedOut.current || !useUserStore.getState().isAuthenticated) {
+          setLoading(false);
+          setBooting(false);
+        }
         _authInitialized.current = true;
       }
     };
@@ -250,6 +272,10 @@ export default function RootLayout() {
           }
 
           if (event === 'SIGNED_OUT') {
+            // Guard: if a real session exists in storage, this SIGNED_OUT
+            // is from a stale background refresh — don't wipe the real user.
+            const { data: currentSession } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+            if (currentSession?.session) return;
             stopPeriodicTokenRefresh();
             clearLocalStores();
             clearUser();
@@ -260,10 +286,9 @@ export default function RootLayout() {
         } catch (err: any) {
           const msg = err?.message || err?.toString?.() || '';
           if (msg.includes('Invalid Refresh Token')) {
-            console.warn('[auth-subscription] Stale refresh token. Clearing.');
-            await clearStoredSession();
-            clearLocalStores();
-            clearUser();
+            console.warn('[auth-subscription] Stale refresh token. Ignoring — SIGNED_OUT handler will handle it.');
+            // Don't clearUser or clearStoredSession here — that would race against
+            // a just-completed SIGNED_IN and wipe a successful login.
           } else {
             console.error('[auth-subscription] Error:', err);
           }
@@ -416,7 +441,6 @@ function AppNavigator() {
     }}>
       <Stack.Screen name="index" options={{ animation: 'fade' }} />
       <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
-      <Stack.Screen name="(auth)/reset-password" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
       <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
       <Stack.Screen name="(ai-trainer)" options={{ animation: 'fade' }} />
@@ -511,6 +535,14 @@ function AppNavigator() {
       <Stack.Screen
         name="modals/camera-capture"
         options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/barcode-scanner"
+        options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/barcode-result"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
       />
     </Stack>
   );

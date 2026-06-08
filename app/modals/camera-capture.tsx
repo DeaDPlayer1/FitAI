@@ -6,12 +6,14 @@ import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { theme } from '@/constants/theme';
+import { useUserStore } from '@/store/userStore';
 import { analyzeImageWithAI } from '@/lib/nutritionAI';
 
 type UIState = 'idle' | 'capturing' | 'processing';
 
 export default function CameraCaptureModal() {
   const router = useRouter();
+  const { user } = useUserStore();
   const cameraRef = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [uiState, setUIState] = useState<UIState>('idle');
@@ -49,7 +51,7 @@ export default function CameraCaptureModal() {
       setSelectedImageUri(uri);
       setUIState('processing');
 
-      const result = await analyzeImageWithAI(uri);
+      const result = await analyzeImageWithAI(uri, user?.id);
       (router as any).replace({
         pathname: '/modals/confirm-food',
         params: {

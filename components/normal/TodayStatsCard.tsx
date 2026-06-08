@@ -43,7 +43,7 @@ export default function TodayStatsCard({
   calories, calorieGoal, protein, proteinGoal, water, waterGoal, steps, stepsGoal, streakDays,
 }: Props) {
   const pct = calorieGoal > 0 ? (calories / calorieGoal) * 100 : 0;
-  const remaining = Math.max(calorieGoal - calories, 0);
+  const remaining = calorieGoal - calories;
   const circumference = 2 * Math.PI * 42;
   const fillLen = (pct / 100) * circumference;
 
@@ -71,7 +71,7 @@ export default function TodayStatsCard({
               <Text style={styles.ringLabel}>KCAL</Text>
             </View>
           </View>
-          <Text style={styles.leftText}>{remaining} kcal left</Text>
+          <Text style={[styles.leftText, remaining < 0 && { color: '#FF6B6B' }]}>{remaining} kcal {remaining < 0 ? 'over' : 'left'}</Text>
         </View>
 
         <View style={styles.right}>

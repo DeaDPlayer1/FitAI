@@ -17,7 +17,7 @@ let _secureStoreReady: boolean | null = null;
 const ensureSecureStore = async (): Promise<boolean> => {
   if (_secureStoreReady !== null) return _secureStoreReady;
   try {
-    _secureStoreReady = await SecureStore.isAvailableAsync();
+    _secureStoreReady = await withTimeout(SecureStore.isAvailableAsync(), 2000) ?? false;
   } catch {
     _secureStoreReady = false;
   }
@@ -26,18 +26,23 @@ const ensureSecureStore = async (): Promise<boolean> => {
 
 // Dual-layer storage: SecureStore (primary) + AsyncStorage (replica)
 // Both layers written/read for resilience against OS-level store clearing
+// Timeout wrapper to prevent SecureStore calls from hanging forever on some Android devices.
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T | null> =>
+  Promise.race([
+    promise,
+    new Promise<null>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]).catch(() => null);
+
 const ExpoStorage = {
   getItem: async (key: string) => {
     try {
       if (key.startsWith(SESSION_KEY_MATCH)) {
-        // Try SecureStore first
         const avail = await ensureSecureStore();
         if (avail) {
-          const val = await SecureStore.getItemAsync(key);
+          const val = await withTimeout(SecureStore.getItemAsync(key), 2000);
           if (val !== null) return val;
         }
       }
-      // Fallback to AsyncStorage
       return await AsyncStorage.getItem(key);
     } catch {
       try { return await AsyncStorage.getItem(key); } catch { return null; }
@@ -45,13 +50,13 @@ const ExpoStorage = {
   },
   setItem: async (key: string, value: string) => {
     try {
-      // Always write to AsyncStorage (reliable replica)
+      // Always write to AsyncStorage first (reliable)
       await AsyncStorage.setItem(key, value).catch(() => {});
-      // Also write to SecureStore for auth keys (only if under 2048 byte limit)
+      // SecureStore write — fire without await to avoid hanging login flow
       if (key.startsWith(SESSION_KEY_MATCH)) {
         const avail = await ensureSecureStore();
         if (avail && value.length <= 2048) {
-          await SecureStore.setItemAsync(key, value).catch(() => {});
+          SecureStore.setItemAsync(key, value).catch(() => {});
         }
       }
     } catch {
@@ -60,12 +65,11 @@ const ExpoStorage = {
   },
   removeItem: async (key: string) => {
     try {
-      // Always remove from both stores
       await AsyncStorage.removeItem(key).catch(() => {});
       if (key.startsWith(SESSION_KEY_MATCH)) {
         const avail = await ensureSecureStore();
         if (avail) {
-          await SecureStore.deleteItemAsync(key).catch(() => {});
+          SecureStore.deleteItemAsync(key).catch(() => {});
         }
       }
     } catch {

@@ -38,7 +38,7 @@ export default function NutritionSummaryCard({
   calories, calorieGoal, protein, proteinGoal, carbs, carbsGoal, fat, fatGoal,
 }: Props) {
   const pct = calorieGoal > 0 ? (calories / calorieGoal) * 100 : 0;
-  const remaining = Math.max(calorieGoal - calories, 0);
+  const remaining = calorieGoal - calories;
   const circumference = 2 * Math.PI * 35;
   const fillLen = (pct / 100) * circumference;
 
@@ -79,8 +79,8 @@ export default function NutritionSummaryCard({
               />
             </Svg>
             <View style={styles.ringCenter}>
-              <Text style={styles.leftNum}>{remaining}</Text>
-              <Text style={styles.leftLabel}>LEFT</Text>
+              <Text style={[styles.leftNum, remaining < 0 && { color: '#FF6B6B' }]}>{remaining}</Text>
+              <Text style={styles.leftLabel}>{remaining < 0 ? 'OVER' : 'LEFT'}</Text>
             </View>
           </View>
           <Text style={styles.leftSub}>of {calorieGoal} kcal</Text>

@@ -55,7 +55,7 @@ export default function FloatingTabBar({ state, navigation, maxVisible = 5 }: Fl
             <TabItem
               tab={{ id: 'back', label: 'Back', icon: 'chevron-left' }}
               isActive={false}
-              onPress={() => navigation.goBack()}
+               onPress={() => navigation.navigate('index')}
             />
           </View>
         </View>

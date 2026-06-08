@@ -131,16 +131,6 @@ export default function WorkoutBuilderScreen() {
           </View>
         </View>
 
-        {/* Rest */}
-        <View style={styles.control}>
-          <Text style={styles.controlLabel}>REST (s)</Text>
-          <TextInput
-            style={[styles.miniInput, { width: 54 }]}
-            keyboardType="numeric"
-            value={String(ex.rest_time_seconds)}
-            onChangeText={(v) => updateExerciseTargets(dayId, sectionId, ex.id, { rest_time_seconds: parseInt(v) || 0 })}
-          />
-        </View>
       </View>
     </Animated.View>
   );

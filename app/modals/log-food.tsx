@@ -6,7 +6,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { Audio } from 'expo-av';
+
 import Animated, {
   FadeInUp, FadeInDown,
   useSharedValue, useAnimatedStyle,
@@ -17,7 +17,6 @@ import { theme } from '@/constants/theme';
 import { useUserStore } from '@/store/userStore';
 import { analyzeFood, analyzeImageWithAI, MealLog } from '@/lib/nutritionAI';
 
-import { uploadImage } from '@/lib/cloudinary';
 import { supabase } from '@/lib/supabase';
 import { syncUserData } from '@/lib/sync';
 import { useToast } from '@/components/ui/ToastNotification';
@@ -31,128 +30,6 @@ function AnimatedProgressFill({ pct, color, delay: delayMs }: { pct: number; col
   }, []);
   const anim = useAnimatedStyle(() => ({ width: `${w.value * 100}%` }));
   return <Animated.View style={[styles.macroProgressFill, { backgroundColor: color }, anim]} />;
-}
-
-function VoiceInputButton({
-  onResult,
-  onProcessingChange,
-}: {
-  onResult: (transcript: string) => void;
-  onProcessingChange: (processing: boolean) => void;
-}) {
-  const [uiState, setUIState] = useState<'idle' | 'listening' | 'processing' | 'error'>('idle');
-  const [transcript, setTranscript] = useState('');
-  const voiceRef = useRef<any>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isAvailable = useRef(true);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const Voice = require('@react-native-voice/voice').default;
-        voiceRef.current = Voice;
-        Voice.onSpeechStart = () => { if (mounted) setUIState('listening'); };
-        Voice.onSpeechEnd = () => { if (mounted) setUIState('processing'); };
-        Voice.onSpeechResults = (e: any) => {
-          const text = e.value?.[0] || '';
-          if (!mounted) return;
-          setTranscript(text);
-          if (text.trim().length > 1) {
-            onProcessingChange(true);
-            setTimeout(() => { if (mounted) onResult(text); }, 100);
-          } else {
-            setUIState('idle');
-          }
-        };
-        Voice.onSpeechError = () => {
-          if (mounted) { setUIState('idle'); }
-        };
-      } catch {
-        isAvailable.current = false;
-      }
-    })();
-    return () => {
-      mounted = false;
-      if (timerRef.current) clearTimeout(timerRef.current);
-      try {
-        if (voiceRef.current) {
-          voiceRef.current.destroy().then(() => voiceRef.current.removeAllListeners()).catch(() => {});
-        }
-      } catch {}
-    };
-  }, []);
-
-  const startListening = async () => {
-    if (!isAvailable.current) {
-      Alert.alert('Voice', 'Voice requires the full app build.');
-      return;
-    }
-    const { granted } = await Audio.requestPermissionsAsync();
-    if (!granted) {
-      Alert.alert('Permission Required', 'Microphone access is needed for voice food logging.',
-        [{ text: 'Open Settings', onPress: () => Linking.openSettings() }, { text: 'Cancel' }]);
-      return;
-    }
-    try {
-      setUIState('listening');
-      onProcessingChange(false);
-      await voiceRef.current.start('en-US');
-      timerRef.current = setTimeout(async () => {
-        try { await voiceRef.current.stop(); } catch {}
-      }, 8000);
-    } catch {
-      setUIState('idle');
-    }
-  };
-
-  const pulseAnim = useSharedValue(1);
-  useEffect(() => {
-    if (uiState === 'listening') {
-      pulseAnim.value = withTiming(1.3, { duration: 600, easing: Easing.inOut(Easing.ease) });
-      const interval = setInterval(() => {
-        pulseAnim.value = withTiming(1, { duration: 600, easing: Easing.inOut(Easing.ease) });
-        setTimeout(() => {
-          pulseAnim.value = withTiming(1.3, { duration: 600, easing: Easing.inOut(Easing.ease) });
-        }, 600);
-      }, 1200);
-      return () => clearInterval(interval);
-    } else {
-      pulseAnim.value = withTiming(1, { duration: 200 });
-    }
-  }, [uiState]);
-
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pulseAnim.value }],
-  }));
-
-  return (
-    <View>
-      <Animated.View style={uiState === 'listening' ? animStyle : undefined}>
-        <TouchableOpacity
-          onPress={startListening}
-          style={[
-            styles.toolBtn,
-            uiState === 'listening' && styles.toolBtnActive,
-            uiState === 'processing' && { backgroundColor: theme.colors.primary },
-          ]}
-          disabled={uiState === 'listening' || uiState === 'processing'}
-        >
-          {uiState === 'processing' ? (
-            <ActivityIndicator size="small" color="#FFF" />
-          ) : (
-            <Feather name="mic" size={20} color={uiState === 'listening' ? '#FFF' : theme.colors.primaryDeep} />
-          )}
-        </TouchableOpacity>
-      </Animated.View>
-      {uiState === 'listening' && (
-        <Text style={styles.voiceLabel}>Listening...</Text>
-      )}
-      {uiState === 'processing' && transcript ? (
-        <Text style={styles.voiceTranscript}>Heard: {transcript}</Text>
-      ) : null}
-    </View>
-  );
 }
 
 export default function LogFoodModal() {
@@ -171,24 +48,10 @@ export default function LogFoodModal() {
   const [parsedMeal, setParsedMeal] = useState<MealLog | null>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const [analyzingSource, setAnalyzingSource] = useState<'text' | 'voice' | 'vision'>('text');
+  const [isVisionAnalysis, setIsVisionAnalysis] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
 
   const { showToast } = useToast();
-
-  const handleVisionAnalysis = async (uri: string) => {
-    setAnalyzingSource('vision');
-    setStep('parsing');
-    try {
-      const imageUrl = await uploadImage(uri);
-      const mealData = await analyzeFood({ imageBase64: imageUrl, userId: user?.id || '' });
-      setParsedMeal(mealData);
-      setStep('review');
-    } catch (err: any) {
-      Alert.alert('Vision Error', err.message);
-      setStep('input');
-    }
-  };
 
   const pickFromGallery = async () => {
     try {
@@ -214,10 +77,10 @@ export default function LogFoodModal() {
 
       const uri = result.assets[0].uri;
       setSelectedImageUri(uri);
-      setAnalyzingSource('vision');
+      setIsVisionAnalysis(true);
       setStep('parsing');
 
-      const analysisResult = await analyzeImageWithAI(uri);
+      const analysisResult = await analyzeImageWithAI(uri, user?.id);
       (router as any).replace({
         pathname: '/modals/confirm-food',
         params: {
@@ -311,30 +174,6 @@ export default function LogFoodModal() {
               />
               
               <View style={styles.toolRow}>
-                <VoiceInputButton
-                  onResult={(transcript) => {
-                    (router as any).replace({
-                      pathname: '/modals/confirm-food',
-                      params: {
-                        voiceTranscript: transcript,
-                        foodName: transcript,
-                        calories: '0',
-                        protein: '0',
-                        carbs: '0',
-                        fat: '0',
-                        fiber: '0',
-                        serving: '1 serving',
-                        inputType: 'voice',
-                      },
-                    });
-                  }}
-                  onProcessingChange={(processing) => {
-                    if (processing) {
-                      setAnalyzingSource('voice');
-                      setStep('parsing');
-                    }
-                  }}
-                />
                 <TouchableOpacity 
                   onPress={() => router.push('/modals/camera-capture')}
                   style={styles.toolBtn}
@@ -346,6 +185,12 @@ export default function LogFoodModal() {
                   style={styles.toolBtn}
                 >
                   <Feather name="image" size={20} color={theme.colors.primaryDeep} />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  onPress={() => router.push('/modals/barcode-scanner')}
+                  style={styles.toolBtn}
+                >
+                  <Text style={{ fontSize: 20, lineHeight: 22 }}>📦</Text>
                 </TouchableOpacity>
               </View>
 
@@ -369,9 +214,7 @@ export default function LogFoodModal() {
           <View style={styles.loadingState}>
             <ActivityIndicator size="large" color={theme.colors.primary} />
             <Text style={styles.loadingText}>
-              {analyzingSource === 'voice'
-                ? 'Transcribing and analyzing...'
-                : analyzingSource === 'vision'
+              {isVisionAnalysis
                 ? 'AI is analyzing the image...'
                 : 'AI is calculating nutrients...'}
             </Text>
@@ -416,8 +259,15 @@ export default function LogFoodModal() {
                       <View style={[styles.goalProgressFill, { width: `${Math.min((parsedMeal.totalCalories / user.goals.calories) * 100, 100)}%` }]} />
                     ) : null}
                   </View>
-                  <Text style={styles.goalProgressText}>
-                    {user?.goals?.calories ? `${Math.round((parsedMeal.totalCalories / user.goals.calories) * 100)}% of daily target` : 'Set a calorie goal in settings'}
+                  <Text style={[styles.goalProgressText, parsedMeal.totalCalories > (user?.goals?.calories || 0) && { color: '#FF6B6B' }]}>
+                    {user?.goals?.calories
+                      ? (() => {
+                          const diff = user.goals.calories - parsedMeal.totalCalories;
+                          return diff < 0
+                            ? `${diff} kcal over`
+                            : `${diff} kcal remaining`;
+                        })()
+                      : 'Set a calorie goal in settings'}
                   </Text>
                 </View>
               </View>
@@ -426,10 +276,16 @@ export default function LogFoodModal() {
             {/* ── Macro Breakdown ── */}
             <View style={styles.macroSection}>
               {[
-                { label: 'Protein', value: parsedMeal.totalProtein, unit: 'g', color: '#FB7185', bgColor: 'rgba(251,113,133,0.12)', pct: (parsedMeal.totalProtein / ((user?.goals?.protein || 150) || 1)) },
-                { label: 'Carbs', value: parsedMeal.totalCarbs, unit: 'g', color: '#F59E0B', bgColor: 'rgba(245,158,11,0.12)', pct: (parsedMeal.totalCarbs / ((user?.goals?.carbs || 250) || 1)) },
-                { label: 'Fat', value: parsedMeal.totalFat, unit: 'g', color: '#3B82F6', bgColor: 'rgba(59,130,246,0.12)', pct: (parsedMeal.totalFat / ((user?.goals?.fat || 65) || 1)) },
-              ].map((macro, i) => (
+                { label: 'Protein', value: parsedMeal.totalProtein, unit: 'g', color: '#FB7185', bgColor: 'rgba(251,113,133,0.12)', goal: user?.goals?.protein || 150 },
+                { label: 'Carbs', value: parsedMeal.totalCarbs, unit: 'g', color: '#F59E0B', bgColor: 'rgba(245,158,11,0.12)', goal: user?.goals?.carbs || 250 },
+                { label: 'Fat', value: parsedMeal.totalFat, unit: 'g', color: '#3B82F6', bgColor: 'rgba(59,130,246,0.12)', goal: user?.goals?.fat || 65 },
+              ].map((macro, i) => {
+                const pct = macro.value / macro.goal;
+                const diff = macro.goal - macro.value;
+                const diffText = diff < 0
+                  ? `${diff}${macro.unit} over`
+                  : `${diff}${macro.unit} left`;
+                return (
                 <Animated.View
                   key={macro.label}
                   entering={FadeInDown.delay(200 + i * 100)}
@@ -437,14 +293,16 @@ export default function LogFoodModal() {
                 >
                   <View style={styles.macroTop}>
                     <Text style={[styles.macroValue, { color: macro.color }]}>{macro.value}{macro.unit}</Text>
-                    <Text style={styles.macroPct}>{Math.round(macro.pct * 100)}%</Text>
+                    <Text style={[styles.macroPct, diff < 0 && { color: '#FF6B6B' }]}>{Math.round(pct * 100)}%</Text>
                   </View>
                   <Text style={styles.macroLabel}>{macro.label}</Text>
                   <View style={styles.macroProgressBg}>
-                    <AnimatedProgressFill pct={Math.min(macro.pct, 1)} color={macro.color} delay={300 + i * 100} />
+                    <AnimatedProgressFill pct={Math.min(pct, 1)} color={macro.color} delay={300 + i * 100} />
                   </View>
+                  <Text style={[styles.macroRemaining, diff < 0 && { color: '#FF6B6B' }]}>{diffText}</Text>
                 </Animated.View>
-              ))}
+                );
+              })}
             </View>
 
             {/* ── AI Insight ── */}
@@ -642,6 +500,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden', marginTop: 4,
   },
   macroProgressFill: { height: '100%', borderRadius: 2 },
+  macroRemaining: {
+    fontSize: 11, fontWeight: '700', color: theme.colors.text.muted,
+    marginTop: 2,
+  },
 
   insightCard: {
     backgroundColor: 'rgba(106,73,250,0.06)', borderRadius: 20, padding: 16,
@@ -663,13 +525,5 @@ const styles = StyleSheet.create({
   secondaryCta: { alignItems: 'center', paddingVertical: 12 },
   secondaryCtaText: {
     fontSize: 14, fontWeight: '700', color: theme.colors.text.muted,
-  },
-  voiceLabel: {
-    fontSize: 11, fontWeight: '600', color: theme.colors.primary,
-    textAlign: 'center', marginTop: 4,
-  },
-  voiceTranscript: {
-    fontSize: 11, fontWeight: '600', color: theme.colors.text.muted,
-    textAlign: 'center', marginTop: 4, maxWidth: 120,
   },
 });

@@ -97,24 +97,41 @@ async function identifyFoodFromImage(base64: string): Promise<string> {
     },
     body: JSON.stringify({
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      max_tokens: 300,
+      max_tokens: 500,
       temperature: 0,
       messages: [
         {
           role: 'system',
-          content: `You are a food identification expert. Analyse the image carefully.
-List every food item you see with:
-- The exact food name
-- The cooking method (fried, boiled, grilled, steamed, raw, baked, etc.)
-- The estimated portion size with weight if possible (e.g. "2 large eggs ~100g", "1 cup cooked white rice ~200g")
-If multiple items are present, list each one on a new line.
-Be specific. No introductions, no filler, no explanations.`
+          content: `You are a food identification expert specializing in global cuisines, especially Indian/South Asian food.
+
+CRITICAL: Identify ALL foods correctly — do NOT guess generic names like "rice and meat" when you see specific Indian dishes.
+
+Common Indian dishes you MUST recognize:
+- Rice dishes: biryani (layered spiced rice with meat/veg), pulao, lemon rice, tamarind rice, curd rice, khichdi (rice+lentil porridge), fried rice
+- Breads: chapati/roti (whole wheat), naan (tandoor-baked), paratha (layered/stuffed), puri/bhatura (deep fried), dosa (fermented rice+urad crepe), appam (lacy fermented rice pancake), uttapam (thick dosa with toppings), bhakri/roti (millet), thepla
+- Lentils (dal): dal tadka, dal makhani, sambar (lentil+veg stew), rasam (peppery soup), chana masala/chole (chickpea curry), rajma (kidney bean curry)
+- Vegetable dishes: aloo gobi (potato+cauliflower), palak paneer (spinach+cottage cheese), paneer butter masala (creamy tomato gravy), matar paneer, bhindi masala (okra), baingan bharta (smoked eggplant mash), bhaji (stir-fried veg), sabzi (mixed veg), avial (coconut veg stew), thoran (stir-fry with coconut)
+- Meat dishes: chicken curry, butter chicken, chicken tikka masala, rogan josh (lamb), vindaloo, keema (minced meat), fish curry, egg curry, pepper chicken, chettinad chicken, hyderabadi biryani
+- South Indian: idli (steamed rice cakes), vada (lentil donuts), upma (semolina porridge), poha (flattened rice), puttu (steamed rice+coconut cylinders), dosa varieties (masala, rava, onion, paper)
+- Snacks: samosa (fried stuffed pastry), pakora (gram flour battered fritters), kachori, dhokla (fermented chickpea cake), bhel puri, pani puri/golgappa, sev puri, vada pav, pav bhaji
+- Breakfast: poha, upma, paratha, chilla (gram flour pancakes), vermicelli upma/semiya, muesli with Indian flavors
+- Sweets/desserts: kheer/payasam (rice pudding), halwa (sooji/gajar/atta), gulab jamun, jalebi, rasgulla, barfi, ladoo, phirni, shrikhand
+- Yogurt & drinks: dahi/curd, raita (yogurt+veg), lassi (sweet/salted), chaas (buttermilk), buttermilk, chai (tea), filter coffee, nimbu pani (lemonade)
+- Condiments: chutney (mint/coriander/tamarind/coconut/mango), pickle/achaar, papad, mango pickle, lime pickle
+
+For each food item list:
+- Exact dish name (e.g. "khichdi" not "rice and lentils", "dal tadka" not just "dal")
+- Cooking method
+- Estimated portion with weight (e.g. "2 idlis ~80g", "1 bowl khichdi ~250g", "1 medium chapati ~40g", "1 cup dal tadka ~200g")
+- Be SPECIFIC about Indian dishes — use their proper names
+
+No introductions, no filler, no explanations. Just the list.`
         },
         {
           role: 'user',
           content: [
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
-            { type: 'text', text: 'List all food items in this image with portion sizes.' }
+            { type: 'text', text: 'List all food items in this image with their exact names and portion sizes.' }
           ]
         }
       ]
@@ -127,6 +144,8 @@ Be specific. No introductions, no filler, no explanations.`
 }
 
 async function calculateNutritionFromDescription(description: string): Promise<NutritionResult> {
+  console.log('[nutritionAI] calculateNutritionFromDescription input:', description.substring(0, 200));
+
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -134,31 +153,105 @@ async function calculateNutritionFromDescription(description: string): Promise<N
       'Authorization': `Bearer ${GROQ_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'llama3-70b-8192',
-      max_tokens: 200,
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 300,
       temperature: 0,
       messages: [
         {
           role: 'system',
-          content: `Nutrition database expert. Calculate total nutrition for all listed food items combined.
-Reply ONLY with this JSON, no other text, no markdown:
-{"name":"short combined name","calories":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"serving":"what was eaten"}`
+          content: `You are a precise nutrition calculator with deep knowledge of Indian cuisine nutrition. Calculate the TOTAL combined nutrition for all items in the meal description.
+
+IMPORTANT: Use known nutritional values per 100g for Indian dishes. Key reference values:
+- Khichdi (dal rice): ~110 kcal/100g, P:4g, C:18g, F:2g, Fbr:2g
+- Plain rice (cooked): ~130 kcal/100g, P:2.7g, C:28g, F:0.3g
+- Chapati/roti (1 medium ~40g): ~100 kcal, P:3g, C:18g, F:2g
+- Paratha (1 medium ~60g): ~170 kcal, P:4g, C:22g, F:8g
+- Naan (1 ~80g): ~240 kcal, P:7g, C:40g, F:6g
+- Dosa (1 medium ~80g): ~140 kcal, P:4g, C:23g, F:3g
+- Idli (1 ~40g): ~40 kcal, P:1.5g, C:8g, F:0.1g
+- Vada (1 ~30g): ~65 kcal, P:2g, C:7g, F:3g
+- Dal tadka (1 cup ~200g): ~200 kcal, P:12g, C:28g, F:6g
+- Dal makhani (1 cup ~200g): ~260 kcal, P:11g, C:30g, F:12g
+- Chana masala/chole (1 cup ~200g): ~240 kcal, P:10g, C:35g, F:7g
+- Rajma (1 cup ~200g): ~220 kcal, P:12g, C:32g, F:5g
+- Palak paneer (1 cup ~200g): ~260 kcal, P:13g, C:10g, F:20g
+- Paneer butter masala (1 cup ~200g): ~350 kcal, P:14g, C:12g, F:28g
+- Matar paneer (1 cup ~200g): ~280 kcal, P:12g, C:15g, F:20g
+- Chicken curry (1 cup ~200g): ~230 kcal, P:25g, C:6g, F:12g
+- Butter chicken (1 cup ~200g): ~320 kcal, P:22g, C:12g, F:22g
+- Biryani (1 cup ~200g): ~280 kcal, P:12g, C:35g, F:10g
+- Pulao (1 cup ~200g): ~220 kcal, P:5g, C:35g, F:7g
+- Sambar (1 cup ~200g): ~120 kcal, P:6g, C:18g, F:3g
+- Rasam (1 cup ~200g): ~60 kcal, P:3g, C:10g, F:1g
+- Upma (1 cup ~200g): ~220 kcal, P:6g, C:35g, F:7g
+- Poha (1 cup ~200g): ~250 kcal, P:5g, C:40g, F:8g
+- Yogurt/curd/dahi (1 cup ~200g): ~120 kcal, P:10g, C:8g, F:5g
+- Raita (1 cup ~200g): ~100 kcal, P:5g, C:8g, F:5g
+- Samosa (1 ~60g): ~130 kcal, P:3g, C:16g, F:6g
+- Pakora (1 ~30g): ~60 kcal, P:2g, C:5g, F:4g
+- Kheer (1 cup ~200g): ~240 kcal, P:7g, C:40g, F:6g
+- Halwa (1 cup ~200g): ~320 kcal, P:5g, C:55g, F:10g
+- Curd rice (1 cup ~200g): ~160 kcal, P:5g, C:25g, F:4g
+- Plain curd/yogurt (100g): ~60 kcal, P:4g, C:5g, F:3g
+
+Reply ONLY with this exact JSON, no markdown, no extra text:
+{"name":"short meal name describing what was identified","calories":120,"protein":5,"carbs":18,"fat":2,"fiber":4,"serving":"description of portions identified"}`
         },
         {
           role: 'user',
-          content: `Calculate total nutrition for this meal: ${description}`
+          content: `Calculate total nutrition for this meal (use exact Indian dish names and known per-100g values): ${description}`
         }
       ]
     })
   });
 
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '');
+    console.error('[nutritionAI] Groq API error:', response.status, errBody);
+    throw new Error(`Groq API error: ${response.status}`);
+  }
+
   const data = await response.json();
-  const raw = data.choices?.[0]?.message?.content || '{}';
-  const clean = extractJSON(raw);
-  return JSON.parse(clean);
+  console.log('[nutritionAI] Raw Groq response:', JSON.stringify(data).substring(0, 300));
+
+  const rawText = data.choices?.[0]?.message?.content || '';
+  console.log('[nutritionAI] Raw text from Groq:', rawText);
+
+  if (!rawText.trim()) {
+    throw new Error('Empty response from nutrition AI.');
+  }
+
+  let parsed: any = {};
+  try {
+    const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const jsonStr = fenceMatch ? fenceMatch[1].trim() : rawText;
+    const start = jsonStr.indexOf('{');
+    const end = jsonStr.lastIndexOf('}');
+    if (start !== -1 && end !== -1) {
+      parsed = JSON.parse(jsonStr.substring(start, end + 1));
+    } else {
+      throw new Error('No JSON object found in response');
+    }
+  } catch (err) {
+    console.error('[nutritionAI] JSON parse failed. Raw text was:', rawText);
+    throw new Error('Could not parse nutrition response from AI.');
+  }
+
+  const result: NutritionResult = {
+    name:     String(parsed.name     || description.split('\n')[0] || 'Mixed Meal'),
+    calories: Number(parsed.calories || parsed.energy || parsed.kcal || 0),
+    protein:  Number(parsed.protein  || parsed.proteins || 0),
+    carbs:    Number(parsed.carbs    || parsed.carbohydrates || parsed.carbs_g || 0),
+    fat:      Number(parsed.fat      || parsed.fats || parsed.fat_g || 0),
+    fiber:    Number(parsed.fiber    || parsed.fibre || 0),
+    serving:  String(parsed.serving  || parsed.serving_size || '1 serving'),
+  };
+
+  console.log('[nutritionAI] Calculated nutrition:', JSON.stringify(result));
+  return result;
 }
 
-export async function analyzeImageWithAI(uri: string): Promise<NutritionResult & { ai_description: string }> {
+export async function analyzeImageWithAI(uri: string, userId?: string): Promise<NutritionResult & { ai_description: string }> {
   const base64 = await preprocessImage(uri);
 
   const description = await identifyFoodFromImage(base64);
@@ -166,7 +259,67 @@ export async function analyzeImageWithAI(uri: string): Promise<NutritionResult &
     throw new Error('No food detected in the image. Try a clearer photo with better lighting.');
   }
 
+  const firstLine = description.split('\n')[0].replace(/^[-•*]\s*/, '').trim();
+  const foodKey = firstLine.replace(/\s*~\s*\d+g\s*$/, '').replace(/\s*\(\w+\)\s*$/, '').toLowerCase().trim();
+
+  let matched: FoodResult | null = null;
+  try {
+    const db = await getDb();
+    await seedFoodCache();
+    const rows = await db.getAllAsync<any>(
+      `SELECT * FROM food_cache WHERE LOWER(food_name) LIKE ? LIMIT 3`,
+      `%${foodKey}%`
+    );
+    if (rows.length > 0) {
+      matched = convertPer100gToServing(rows[0]);
+    } else {
+      matched = await fuzzyLookup(foodKey);
+    }
+  } catch { /* fall through to AI */ }
+
+  if (matched) {
+    return {
+      name: matched.food_name,
+      calories: Math.round(matched.calories),
+      protein: Math.round(matched.protein * 10) / 10,
+      carbs: Math.round(matched.carbs * 10) / 10,
+      fat: Math.round(matched.fat * 10) / 10,
+      fiber: Math.round(matched.fiber * 10) / 10,
+      serving: matched.serving_size,
+      ai_description: description,
+    };
+  }
+
   const nutrition = await calculateNutritionFromDescription(description);
+
+  // Cache AI result so future lookups skip the nutrition AI call
+  if (userId) {
+    try {
+      await insertIntoFoodCache({
+        food_name: nutrition.name.toLowerCase(),
+        calories: nutrition.calories,
+        protein: nutrition.protein,
+        carbs: nutrition.carbs,
+        fat: nutrition.fat,
+        fiber: nutrition.fiber,
+        serving_size: nutrition.serving,
+        serving_grams: 100,
+        source: 'ai',
+      });
+      await saveToUserHistory(userId, {
+        food_name: nutrition.name.toLowerCase(),
+        calories: nutrition.calories,
+        protein: nutrition.protein,
+        carbs: nutrition.carbs,
+        fat: nutrition.fat,
+        fiber: nutrition.fiber,
+        serving_size: nutrition.serving,
+        serving_grams: 100,
+        source: 'ai',
+      });
+    } catch { /* non-critical cache update */ }
+  }
+
   return { ...nutrition, ai_description: description };
 }
 
@@ -484,12 +637,12 @@ async function lookupOpenFoodFacts(food_key: string): Promise<FoodResult | null>
 
 async function callGroqWithText(foodDescription: string, userId: string): Promise<FoodResult> {
   console.log('[nutritionAI] Resolved from Layer 5 (Groq AI):', foodDescription);
-  const prompt = `Nutrition analyst. Reply ONLY with JSON, no other text:
+  const prompt = `Nutrition analyst with expertise in Indian cuisine. Reply ONLY with JSON, no other text:
 {"name":"string","calories":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"serving":"string"}
-Values per single serving. Nutrition for: ${foodDescription}`;
+Values per single serving. Use known Indian dish nutrition values (e.g. khichdi ~110kcal/100g, dal tadka ~200kcal/cup, etc.). Nutrition for: ${foodDescription}`;
   const raw = await groqChatRaw(
     [
-      { role: 'system', content: 'You are a nutrition analyst. Return ONLY valid JSON, no markdown, no explanation.' },
+      { role: 'system', content: 'You are a nutrition analyst with deep knowledge of Indian cuisine nutrition. Return ONLY valid JSON, no markdown, no explanation. Use known per-100g values for Indian dishes.' },
       { role: 'user', content: prompt },
     ],
     'llama-3.3-70b-versatile',
@@ -521,8 +674,10 @@ Values per single serving. Nutrition for: ${foodDescription}`;
 
 async function callGroqWithImage(imageBase64: string, userId: string): Promise<MealLog> {
   const mt = autoMealType();
-  const prompt = `Analyze this food image and provide detailed nutritional data.
-Identify all visible food items, estimate their portions, and calculate macros.
+  const prompt = `You are a food recognition expert specializing in Indian cuisine. Analyze this food image carefully.
+Identify ALL visible food items using their EXACT names — for Indian dishes use proper names like khichdi, dal tadka, sambar, dosa, idli, biryani, chole, palak paneer, etc. Do NOT use generic descriptions like "rice and lentils" when you can identify the dish as "khichdi".
+Estimate portions based on visual cues (bowl size, plate size).
+Use known nutritional values for Indian cuisine per 100g.
 Return ONLY valid JSON matching this structure:
 {
   "items": [
@@ -564,8 +719,19 @@ Return ONLY valid JSON matching this structure:
   const jsonStr = extractJSON(cleaned);
   console.log('[nutritionAI] Image analysis:', jsonStr.substring(0, 200));
   const mealLog: MealLog = JSON.parse(jsonStr);
-  // Save each food item to user history
+  // Save each food item to shared food_cache + user history
   for (const item of mealLog.items) {
+    await insertIntoFoodCache({
+      food_name: item.name.toLowerCase(),
+      calories: item.calories,
+      protein: item.protein,
+      carbs: item.carbs,
+      fat: item.fat,
+      fiber: item.fiber || 0,
+      serving_size: item.quantity || '1 serving',
+      serving_grams: 100,
+      source: 'ai_vision',
+    });
     await saveToUserHistory(userId, {
       food_name: item.name.toLowerCase(),
       calories: item.calories,

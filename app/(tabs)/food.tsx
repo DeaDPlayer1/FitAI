@@ -2,10 +2,10 @@
  * NUTRITION SCREEN v5 — Premium AI Fueling Experience
  * Layout: NutritionHero → EnergyRing → MacroPerformance → AINutritionCard → MealTimeline → HydrationRecovery
  */
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  Platform, RefreshControl, ActivityIndicator, StatusBar,
+  Platform, RefreshControl, ActivityIndicator, StatusBar, TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -13,7 +13,7 @@ import { Feather } from '@expo/vector-icons';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 
 import { theme } from '@/constants/theme';
-import { useNutritionStore } from '@/store/nutritionStore';
+import { useNutritionStore, FoodLogEntry } from '@/store/nutritionStore';
 import { useUserStore } from '@/store/userStore';
 import { syncUserData } from '@/lib/sync';
 import { supabase } from '@/lib/supabase';
@@ -27,6 +27,7 @@ import AINutritionCard from '@/components/ui/AINutritionCard';
 import MealTimeline from '@/components/ui/MealTimeline';
 import HydrationRecovery from '@/components/ui/HydrationRecovery';
 import SectionHeader from '@/components/ui/SectionHeader';
+import CalendarWidget from '@/components/ui/CalendarWidget';
 
 export default function FoodScreen() {
   const router = useRouter();
@@ -45,10 +46,43 @@ export default function FoodScreen() {
   const [waterIntake, setWaterIntake] = useState(0);
   const { showToast } = useToast();
 
-  const consumed = getTotalCalories?.() || 0;
-  const protein = getTotalProtein?.() || 0;
-  const carbs = getTotalCarbs?.() || 0;
-  const fats = getTotalFats?.() || 0;
+  // ── Date picker ──
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [historyMeals, setHistoryMeals] = useState<any[] | null>(null);
+  const isToday = useMemo(() => {
+    const d = new Date();
+    return selectedDate.getDate() === d.getDate() &&
+      selectedDate.getMonth() === d.getMonth() &&
+      selectedDate.getFullYear() === d.getFullYear();
+  }, [selectedDate]);
+
+  const fetchDateMeals = useCallback(async (date: Date) => {
+    const { data: { user: u } } = await supabase.auth.getUser();
+    if (!u) return;
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+    const { data } = await supabase
+      .from('meal_logs')
+      .select('*')
+      .eq('user_id', u.id)
+      .gte('logged_at', start.toISOString())
+      .lte('logged_at', end.toISOString())
+      .order('logged_at', { ascending: false });
+    setHistoryMeals(data || []);
+  }, []);
+
+  const consumed = !isToday && historyMeals
+    ? historyMeals.reduce((s, m) => s + (m.calories || 0), 0)
+    : (getTotalCalories?.() || 0);
+  const protein = !isToday && historyMeals
+    ? historyMeals.reduce((s, m) => s + (m.protein_g || 0), 0)
+    : (getTotalProtein?.() || 0);
+  const carbs = !isToday && historyMeals
+    ? historyMeals.reduce((s, m) => s + (m.carbs_g || 0), 0)
+    : (getTotalCarbs?.() || 0);
+  const fats = !isToday && historyMeals
+    ? historyMeals.reduce((s, m) => s + (m.fat_g || 0), 0)
+    : (getTotalFats?.() || 0);
 
   const proteinGoal = user?.goals?.protein ?? Math.round(calorieGoal * 0.3 / 4);
   const carbsGoal = user?.goals?.carbs ?? Math.round(calorieGoal * 0.4 / 4);
@@ -59,14 +93,19 @@ export default function FoodScreen() {
     setAnalyzing(true);
     setAnalysisResult(null);
     try {
+      const mealsForAnalysis = !isToday && historyMeals
+        ? historyMeals.map((m: any) => ({
+            name: m.food_name, calories: m.calories, protein_g: m.protein_g, carbs_g: m.carbs_g, fat_g: m.fat_g,
+          }))
+        : todayFoodLogs.map(l => ({
+            name: l.foodName,
+            calories: l.calories,
+            protein_g: l.protein_g,
+            carbs_g: l.carbs_g,
+            fat_g: l.fat_g,
+          }));
       const result = await analyzeNutrition({
-        meals: todayFoodLogs.map(l => ({
-          name: l.foodName,
-          calories: l.calories,
-          protein_g: l.protein_g,
-          carbs_g: l.carbs_g,
-          fat_g: l.fat_g,
-        })),
+        meals: mealsForAnalysis,
         totals: { calories: consumed, protein, carbs, fat: fats },
         goals: { calories: calorieGoal, protein: proteinGoal, carbs: carbsGoal, fat: fatsGoal, water: user?.goals?.water || 8 },
         userProfile: {
@@ -84,7 +123,7 @@ export default function FoodScreen() {
     } finally {
       setAnalyzing(false);
     }
-  }, [analyzing, todayFoodLogs, consumed, protein, carbs, fats, calorieGoal, proteinGoal, carbsGoal, fatsGoal, user]);
+  }, [analyzing, todayFoodLogs, consumed, protein, carbs, fats, calorieGoal, proteinGoal, carbsGoal, fatsGoal, user, isToday, historyMeals]);
 
   const handleRemoveFood = useCallback(async (logId: string) => {
     if (removingId) return;
@@ -105,12 +144,12 @@ export default function FoodScreen() {
     }
   }, [removingId, removeFoodLog, user?.id]);
 
-  const fetchWater = useCallback(async () => {
+  const fetchWater = useCallback(async (date: Date) => {
     try {
       const { data: { user: u } } = await supabase.auth.getUser();
       if (!u) return;
-      const start = new Date(); start.setHours(0, 0, 0, 0);
-      const end = new Date(); end.setHours(23, 59, 59, 999);
+      const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
       const { data } = await supabase
         .from('water_logs')
         .select('glasses')
@@ -121,29 +160,38 @@ export default function FoodScreen() {
     } catch (e: any) { console.error('fetchWater:', e.message); }
   }, []);
 
+  useEffect(() => {
+    if (!isToday) {
+      fetchDateMeals(selectedDate);
+    } else {
+      setHistoryMeals(null);
+    }
+    fetchWater(selectedDate);
+  }, [selectedDate, isToday, fetchDateMeals, fetchWater]);
+
   const handleAddCustomMeal = () => {
     router.push('/modals/add-meal-type');
   };
 
   useFocusEffect(
     useCallback(() => {
-      if (user?.id) { syncUserData(user.id); fetchWater(); }
-    }, [user?.id, fetchWater])
+      if (user?.id) { syncUserData(user.id); fetchWater(selectedDate); }
+    }, [user?.id, fetchWater, selectedDate])
   );
 
   const onRefresh = async () => {
     if (user?.id) {
       setRefreshing(true);
       await syncUserData(user.id);
-      await fetchWater();
+      await fetchWater(selectedDate);
       setRefreshing(false);
     }
   };
 
-  const remaining = Math.max(0, calorieGoal - consumed);
+  const remaining = calorieGoal - consumed;
   const progress = calorieGoal > 0 ? Math.min(consumed / calorieGoal, 1) : 0;
 
-  const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const todayLabel = selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
   // Macro performance data
   const macroData = useMemo(() => [
@@ -180,33 +228,54 @@ export default function FoodScreen() {
   ], [protein, proteinGoal, carbs, carbsGoal, fats, fatsGoal]);
 
   // Meal timeline data
+  const sourceMeals: FoodLogEntry[] = !isToday && historyMeals
+    ? historyMeals.map((m: any) => ({
+        id: m.id,
+        mealType: m.meal_type?.toLowerCase() || 'snack',
+        foodName: m.food_name || '',
+        calories: m.calories || 0,
+        protein_g: m.protein_g || 0,
+        carbs_g: m.carbs_g || 0,
+        fat_g: m.fat_g || 0,
+        loggedAt: m.logged_at || '',
+      }))
+    : todayFoodLogs;
+
   const mealCards = useMemo(() => mealTypes.map((meal) => ({
     id: meal.id,
     name: meal.name,
     icon: meal.icon as React.ComponentProps<typeof Feather>['name'],
     iconColor: meal.iconColor,
     pastel: meal.pastel,
-    items: todayFoodLogs.filter(l => l.mealType?.toLowerCase() === meal.id.toLowerCase()).map(l => ({
+    items: sourceMeals.filter(l => l.mealType?.toLowerCase() === meal.id.toLowerCase()).map(l => ({
       id: l.id,
       foodName: l.foodName,
       calories: l.calories || 0,
       protein_g: l.protein_g || 0,
       carbs_g: l.carbs_g || 0,
       fat_g: l.fat_g || 0,
+      servingScale: (l as any).servingScale,
     })),
     onAddFood: () => router.push({ pathname: '/modals/log-food', params: { mealType: meal.id } }),
     onRemoveFood: handleRemoveFood,
     removingId,
-  })), [mealTypes, todayFoodLogs, removingId, router, handleRemoveFood]);
+  })), [mealTypes, sourceMeals, isToday, removingId, router, handleRemoveFood]);
 
   // AI message for hero
   const aiMessage = useMemo(() => {
+    if (!isToday) {
+      const totalCals = consumed;
+      const dayStr = selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+      if (totalCals === 0) return `No meals logged on ${dayStr}.`;
+      const pct = calorieGoal > 0 ? Math.round(totalCals / calorieGoal * 100) : 0;
+      return `${dayStr}: ${totalCals} kcal (${pct}% of target).`;
+    }
     const proteinPct = proteinGoal > 0 ? Math.round(protein / proteinGoal * 100) : 0;
     if (proteinPct < 50) return `Protein at ${proteinPct}% — may limit recovery tonight.`;
     if (consumed > calorieGoal * 0.85) return `Fueling looks well balanced today (${Math.round(consumed / calorieGoal * 100)}% of target).`;
     if (remaining > calorieGoal * 0.5) return `${Math.round(consumed / calorieGoal * 100)}% of calories — remember to fuel adequately for recovery.`;
     return 'Your nutrition is on track. Keep it up!';
-  }, [protein, proteinGoal, consumed, calorieGoal, remaining]);
+  }, [protein, proteinGoal, consumed, calorieGoal, remaining, isToday, selectedDate]);
 
   return (
     <View style={s.safe}>
@@ -223,6 +292,24 @@ export default function FoodScreen() {
           dateLabel={todayLabel}
           aiMessage={aiMessage}
         />
+
+        {/* SECTION 1B — DATE PICKER */}
+        <View style={s.calendarWrap}>
+          <CalendarWidget
+            selectedDate={selectedDate}
+            onDayPress={(date) => setSelectedDate(date)}
+            completedDates={new Set()}
+          />
+          {!isToday && (
+            <TouchableOpacity
+              onPress={() => setSelectedDate(new Date())}
+              style={s.todayBtn}
+            >
+              <Feather name="calendar" size={14} color={theme.colors.primary} />
+              <Text style={s.todayBtnText}>Back to Today</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* SECTION 2 — DAILY ENERGY OVERVIEW */}
         <Animated.View entering={FadeInDown.delay(100).springify()}>
@@ -278,7 +365,7 @@ export default function FoodScreen() {
         <HydrationRecovery
           current={waterIntake}
           goal={user?.goals?.water || 8}
-          onAdd={async () => {
+          onAdd={isToday ? async () => {
             setWaterIntake((p) => p + 1);
             const Haptics = await import('expo-haptics');
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -286,7 +373,7 @@ export default function FoodScreen() {
               const { data: { user: u } } = await supabase.auth.getUser();
               if (u) await supabase.from('water_logs').insert({ user_id: u.id, glasses: 1, logged_at: new Date().toISOString() });
             } catch (e) { /* silent */ }
-          }}
+          } : () => {}}
         />
 
         <View style={{ height: 100 }} />
@@ -299,4 +386,16 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bg.primary },
   scroll: { flex: 1 },
   scrollContent: { paddingTop: 0, paddingBottom: 100 },
+  calendarWrap: {
+    marginTop: -28,
+    marginBottom: 48,
+    paddingHorizontal: 0,
+  },
+  todayBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 10,
+  },
+  todayBtnText: {
+    fontSize: 13, fontWeight: '700', color: theme.colors.primary,
+  },
 });

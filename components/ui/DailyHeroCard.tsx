@@ -59,7 +59,7 @@ const DailyHeroCardComponent = ({
   streakDays,
 }: DailyHeroCardProps) => {
   // Memoize all derived values — no recalc on unrelated state changes
-  const caloriesRemaining = useMemo(() => Math.max(calorieGoal - caloriesLogged, 0), [calorieGoal, caloriesLogged]);
+  const caloriesRemaining = useMemo(() => calorieGoal - caloriesLogged, [calorieGoal, caloriesLogged]);
   const calorieProgress = useMemo(() => Math.min(caloriesLogged / Math.max(calorieGoal, 1), 1), [caloriesLogged, calorieGoal]);
   const proteinProgress = useMemo(() => Math.min(proteinLogged / Math.max(proteinGoal, 1), 1), [proteinLogged, proteinGoal]);
   const waterProgress = useMemo(() => Math.min(waterGlasses / waterGoal, 1), [waterGlasses, waterGoal]);
@@ -118,8 +118,8 @@ const DailyHeroCardComponent = ({
           strokeWidth={9}
         />
         <View style={styles.remainingRow}>
-          <Text style={styles.remainingValue}>{caloriesRemaining}</Text>
-          <Text style={styles.remainingLabel}> kcal left</Text>
+          <Text style={[styles.remainingValue, caloriesRemaining < 0 && { color: '#FF6B6B' }]}>{caloriesRemaining}</Text>
+          <Text style={styles.remainingLabel}> kcal {caloriesRemaining < 0 ? 'over' : 'left'}</Text>
         </View>
       </View>
 
