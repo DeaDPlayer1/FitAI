@@ -72,7 +72,6 @@ const PlanCardItem = memo(({ card, onPress }: { card: PlanCard; onPress: (id: st
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         onPress={handlePress}
-        delayPressIn={150}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         style={styles.cardTouchable}
       >

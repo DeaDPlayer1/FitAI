@@ -115,7 +115,6 @@ export const WeeklySplitCard = React.memo(({ onEditSplit, onCreateSplit }: Weekl
           <Pressable 
             style={styles.createBtn} 
             onPress={onCreateSplit}
-            delayPressIn={150}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Feather name="plus" size={14} color="white" style={{ marginRight: 6 }} />
@@ -136,7 +135,6 @@ export const WeeklySplitCard = React.memo(({ onEditSplit, onCreateSplit }: Weekl
         <Pressable 
           style={styles.editBtn} 
           onPress={onEditSplit} 
-          delayPressIn={100}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Feather name="edit-2" size={14} color={theme.colors.text.secondary} />
@@ -179,7 +177,6 @@ export const WeeklySplitCard = React.memo(({ onEditSplit, onCreateSplit }: Weekl
       <Pressable
         style={styles.manageBtn}
         onPress={() => router.push('/(tabs)/workout')}
-        delayPressIn={100}
       >
         <Feather name="chevron-right" size={14} color={theme.colors.accent.primary} />
         <Text style={styles.manageBtnText}>Manage Training</Text>

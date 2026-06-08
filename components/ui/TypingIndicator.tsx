@@ -1,9 +1,8 @@
 import React, { useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withSequence, withTiming, withDelay } from 'react-native-reanimated';
-import { theme } from '@/constants/theme';
 
-const Dot = ({ delay }: { delay: number }) => {
+const Dot = ({ delay, color }: { delay: number; color: string }) => {
   const translateY = useSharedValue(0);
   const scale = useSharedValue(1);
   const opacity = useSharedValue(0.4);
@@ -19,15 +18,19 @@ const Dot = ({ delay }: { delay: number }) => {
     opacity: opacity.value,
   }));
 
-  return <Animated.View style={[styles.dot, animatedStyle]} />;
+  return <Animated.View style={[styles.dot, { backgroundColor: color }, animatedStyle]} />;
 };
 
-export const TypingIndicator = () => {
+interface TypingIndicatorProps {
+  dotColor?: string;
+}
+
+export const TypingIndicator = ({ dotColor = '#10B981' }: TypingIndicatorProps) => {
   return (
     <View style={styles.container}>
-      <Dot delay={0} />
-      <Dot delay={200} />
-      <Dot delay={400} />
+      <Dot delay={0} color={dotColor} />
+      <Dot delay={200} color={dotColor} />
+      <Dot delay={400} color={dotColor} />
     </View>
   );
 };
@@ -36,20 +39,11 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: 'white',
-    borderRadius: 18,
-    alignSelf: 'flex-start',
-    marginLeft: 24,
-    marginBottom: 16,
-    ...theme.shadow.card,
+    gap: 5,
   },
   dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: theme.colors.accent.green,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
 });

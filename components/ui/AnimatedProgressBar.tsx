@@ -36,8 +36,9 @@ export const AnimatedProgressBar: React.FC<AnimatedProgressBarProps> = ({
     outputRange: ['0%', '100%'],
   });
 
-  // Handle single color vs gradient array
-  const gradientColors = Array.isArray(color) ? color : [color, color];
+  const gradientColors: [string, string] = Array.isArray(color)
+    ? [color[0] as string, (color[1] || color[0]) as string]
+    : [color, color];
 
   return (
     <View style={styles.container}>
@@ -51,7 +52,7 @@ export const AnimatedProgressBar: React.FC<AnimatedProgressBarProps> = ({
       )}
       
       <View style={[styles.track, { height, borderRadius: height / 2 }]}>
-        <Animated.View style={[styles.fillWrapper, { width: widthInterpolation }]}>
+        <Animated.View style={[styles.fillWrapper, { width: widthInterpolation as any }]}>
           <LinearGradient
             colors={gradientColors}
             start={{ x: 0, y: 0 }}

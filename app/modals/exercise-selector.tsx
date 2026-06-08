@@ -178,7 +178,7 @@ export default function ExerciseSelectorModal() {
                 </View>
                 <View style={styles.itemInfo}>
                   <Text style={styles.itemName} numberOfLines={1}>{ex.name}</Text>
-                  <Text style={styles.itemSub}>{ex.target_muscle_group || ex.muscle} • Advanced</Text>
+                  <Text style={styles.itemSub}>{(ex.target_muscle_group || ex.muscle || '').replace(/\b\w/g, (c: string) => c.toUpperCase())} • Advanced</Text>
                 </View>
                 <TouchableOpacity style={styles.addBtn} onPress={() => handleSelect(ex)}>
                    <Feather name="chevron-right" size={20} color={theme.colors.text.muted} />

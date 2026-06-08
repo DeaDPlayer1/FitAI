@@ -1,21 +1,26 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { ExerciseRecord } from '../../store/workoutTrackingStore';
 import SetRow from './SetRow';
 import { Feather } from '@expo/vector-icons';
 
 interface ExerciseCardProps {
   exercise: ExerciseRecord;
+  onEdit?: () => void;
 }
 
-export default function ExerciseCard({ exercise }: ExerciseCardProps) {
+export default function ExerciseCard({ exercise, onEdit }: ExerciseCardProps) {
   return (
     <View style={styles.card}>
       <View style={styles.header}>
         <Text style={styles.exerciseName}>{exercise.name}</Text>
-        <Feather name="more-horizontal" size={24} color="#9CA3AF" />
+        {onEdit && (
+          <TouchableOpacity onPress={onEdit} style={styles.editBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Feather name="more-horizontal" size={20} color="#9CA3AF" />
+          </TouchableOpacity>
+        )}
       </View>
-      
+
       <View style={styles.tableHeader}>
         <Text style={[styles.columnLabel, { width: 30, textAlign: 'center' }]}>Set</Text>
         <Text style={[styles.columnLabel, { flex: 1, textAlign: 'center' }]}>Previous</Text>
@@ -53,7 +58,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#111827',
+    flex: 1,
   },
+  editBtn: { padding: 4 },
   tableHeader: {
     flexDirection: 'row',
     paddingBottom: 8,
@@ -67,3 +74,4 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 });
+

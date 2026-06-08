@@ -25,11 +25,26 @@ import * as Haptics from 'expo-haptics';
 
 const { width, height } = Dimensions.get('window');
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/;
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(key: string, maxAttempts = 5, windowMs = 30000): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= maxAttempts) return false;
+  entry.count++;
+  return true;
+}
+
 const GOAL_OPTIONS = ['Build Muscle', 'Lose Weight', 'Endurance', 'General Fitness'];
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { setUser } = useUserStore();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -66,12 +81,16 @@ export default function SignupScreen() {
   }, []);
 
   // Validation
-  const isPasswordValid = useMemo(() => password.length >= 8, [password]);
+  const isPasswordValid = useMemo(() => PASSWORD_RE.test(password), [password]);
   const doPasswordsMatch = useMemo(() => password === confirmPassword && confirmPassword.length > 0, [password, confirmPassword]);
 
   const passwordStrength = useMemo(() => {
     if (!password) return { text: 'Empty', color: '#D1D5DB', width: '0%' };
     if (password.length < 6) return { text: 'Too Weak', color: '#EF4444', width: '25%' };
+    if (!/(?=.*[a-z])/.test(password)) return { text: 'Add lowercase', color: '#EF4444', width: '40%' };
+    if (!/(?=.*[A-Z])/.test(password)) return { text: 'Add uppercase', color: '#EF4444', width: '40%' };
+    if (!/(?=.*\d)/.test(password)) return { text: 'Add digit', color: '#EF4444', width: '40%' };
+    if (!/(?=.*[!@#$%^&*])/.test(password)) return { text: 'Add symbol', color: '#EF4444', width: '50%' };
     if (password.length < 10) return { text: 'Moderate', color: '#F59E0B', width: '60%' };
     return { text: 'Strong', color: '#10B981', width: '100%' };
   }, [password]);
@@ -82,9 +101,20 @@ export default function SignupScreen() {
       setError('Please fill in all fields.');
       return;
     }
+    const trimmedEmail = email.trim();
+    if (!EMAIL_RE.test(trimmedEmail)) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (!checkRateLimit(trimmedEmail)) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setError('Too many attempts. Please wait 30 seconds.');
+      return;
+    }
     if (!isPasswordValid) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError('Password must be at least 8 characters.');
+      setError('Password must be 8+ characters with uppercase, lowercase, digit, and special character.');
       return;
     }
     if (!doPasswordsMatch) {
@@ -99,10 +129,12 @@ export default function SignupScreen() {
 
     try {
       // Pass optional data to profile via metadata if needed or store
-      const profile = await signUpUser(email.trim(), password, name.trim());
+      const profile = await signUpUser(trimmedEmail, password, name.trim());
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setUser(profile);
-      router.replace('/onboarding/step1-personal');
+      // RULE: Don't call setUser or navigate here — the onAuthStateChange
+      // listener in _layout.tsx handles state updates, and the route guard
+      // handles navigation. Same pattern as login.tsx.
+      router.replace('/onboarding/welcome');
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setError(err.message || 'Signup failed.');
@@ -235,7 +267,7 @@ export default function SignupScreen() {
                         <View 
                           style={[
                             styles.strengthBarFill, 
-                            { width: passwordStrength.width, backgroundColor: passwordStrength.color }
+                            { width: passwordStrength.width as any, backgroundColor: passwordStrength.color }
                           ]} 
                         />
                       </View>

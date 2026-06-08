@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import Animated, { FadeInUp, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { theme } from '@/constants/theme';
 import { useNutritionStore } from '@/store/nutritionStore';
@@ -65,7 +65,7 @@ export default function AddMealTypeModal() {
         <View style={styles.overlay}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => router.back()} activeOpacity={1} />
           
-          <Animated.View entering={SlideInDown.springify().damping(20)} style={styles.modalContent}>
+          <Animated.View entering={FadeInUp} style={styles.modalContent}>
             <View style={styles.header}>
               <Text style={styles.title}>New Meal Category</Text>
               <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
@@ -82,7 +82,6 @@ export default function AddMealTypeModal() {
                   placeholderTextColor="#9CA3AF"
                   value={name}
                   onChangeText={setName}
-                  autoFocus
                 />
               </View>
 
@@ -143,16 +142,13 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: '#FFFFFF',
   },
   modalContent: {
+    flex: 1,
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
     padding: 24,
     paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-    maxHeight: '90%',
   },
   header: {
     flexDirection: 'row',

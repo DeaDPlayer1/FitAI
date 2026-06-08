@@ -90,7 +90,6 @@ export const WorkoutService = {
     try {
       const { data, error } = await supabase
         .rpc('get_previous_exercise_performance', {
-          p_user_id: userId,
           p_exercise_ids: exerciseIds,
         });
 
@@ -167,6 +166,20 @@ export const WorkoutService = {
 
     if (error) throw error;
     return data;
+  },
+
+  async completeSession(sessionId: string, data: { duration_seconds: number; exercises_completed: number }) {
+    const { error } = await supabase
+      .from('workout_sessions')
+      .update({
+        completed_at: new Date().toISOString(),
+        duration_seconds: data.duration_seconds,
+        exercises_completed: data.exercises_completed,
+        status: 'completed',
+      })
+      .eq('id', sessionId);
+
+    if (error) throw error;
   },
   /**
    * Load a full template with all its sections and exercises

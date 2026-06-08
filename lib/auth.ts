@@ -1,16 +1,38 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
+import { clearStoredSession } from './tokenManager';
+
+export type FitnessGoal = 'fat_loss' | 'muscle_gain' | 'recomposition' | 'strength' | 'maintenance';
+export type ExperienceLevel = 'beginner' | 'intermediate' | 'advanced';
+export type ActivityLevel = 'sedentary' | 'lightly_active' | 'moderately_active' | 'very_active';
+export type DietType = 'vegetarian' | 'non_vegetarian' | 'vegan' | 'eggetarian';
+export type StressLevel = 'low' | 'moderate' | 'high';
+export type CardioPreference = 'none' | 'low' | 'moderate' | 'high';
+export type EquipmentAccess = 'gym' | 'home_full' | 'home_minimal' | 'none';
+export type Gender = 'male' | 'female' | 'other';
 
 export interface HealthProfile {
-  goal: 'fat_loss' | 'muscle_gain' | 'stamina' | null;
+  goal: FitnessGoal | null;
   conditions: string[];
   age: number | null;
-  gender: 'male' | 'female' | 'other' | null;
+  gender: Gender | null;
   height: number | null;
   heightUnit: 'cm' | 'ft';
   weight: number | null;
   weightUnit: 'kg' | 'lbs';
   targetWeight: number | null;
+  experience_level: ExperienceLevel | null;
+  activity_level: ActivityLevel | null;
+  available_days: number | null;
+  equipment: EquipmentAccess | null;
+  diet_type: DietType | null;
+  injuries: string | null;
+  sleep_hours: number | null;
+  stress_level: StressLevel | null;
+  cardio_preference: CardioPreference | null;
 }
+
+export type AppMode = 'normal' | 'ai_trainer';
 
 export interface UserProfile {
   id: string;
@@ -19,6 +41,8 @@ export interface UserProfile {
   avatar_url: string | null;
   created_at: string;
   onboarding_complete: boolean;
+  app_mode: AppMode;
+  dark_mode: boolean;
   health_profile: HealthProfile;
   goals: {
     calories: number;
@@ -40,6 +64,15 @@ export const defaultHealthProfile: HealthProfile = {
   weight: null,
   weightUnit: 'kg',
   targetWeight: null,
+  experience_level: null,
+  activity_level: null,
+  available_days: null,
+  equipment: null,
+  diet_type: null,
+  injuries: null,
+  sleep_hours: null,
+  stress_level: null,
+  cardio_preference: null,
 };
 
 /**
@@ -91,6 +124,8 @@ export async function signUpUser(
       avatar_url: null,
       onboarding_complete: false,
       created_at: new Date().toISOString(),
+      dark_mode: false,
+      app_mode: 'normal' as AppMode,
       health_profile: defaultHealthProfile,
       goals: {
         calories: 1800,
@@ -126,10 +161,26 @@ export async function signInUser(
 
 /**
  * Sign out the current user.
+ * Invalidates server session AND clears all local token storage.
  */
 export async function signOutUser(): Promise<void> {
-  const { error } = await supabase.auth.signOut();
-  if (error) throw new Error(error.message);
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) console.warn('[signOut] Server sign-out error (may already be invalid):', error.message);
+  } catch (err) {
+    console.warn('[signOut] Server sign-out threw:', err);
+  }
+  // Aggressively clear local tokens regardless of server response
+  await clearStoredSession();
+  // Clear @has_account flag so new users see onboarding flow
+  await AsyncStorage.removeItem('@has_account').catch(() => {});
+  // Clear SQLite local data (conversations, messages, AI plans)
+  try {
+    const { clearAllLocalData } = require('./db');
+    await clearAllLocalData();
+  } catch (e) {
+    console.warn('[signOut] SQLite clear error:', e);
+  }
 }
 
 /**
@@ -153,15 +204,26 @@ export async function getCurrentUserProfile(uid: string): Promise<UserProfile> {
     avatar_url: null,
     created_at: data.updated_at || new Date().toISOString(),
     onboarding_complete: !!data.onboarding_complete,
+    app_mode: (data.app_mode as AppMode) || 'normal',
+    dark_mode: !!data.dark_mode,
     health_profile: {
       ...defaultHealthProfile,
       age: data.age ?? null,
       weight: data.weight_kg ?? null,
-      weightUnit: 'kg',
+      weightUnit: data.weight_unit || 'kg',
       height: data.height_cm ?? null,
-      heightUnit: 'cm',
+      heightUnit: data.height_unit || 'cm',
       goal: (data.goal as any) ?? null,
       conditions: data.health_conditions || [],
+      experience_level: (data.experience_level as any) ?? null,
+      activity_level: (data.activity_level as any) ?? null,
+      available_days: data.available_days ?? null,
+      equipment: (data.equipment as any) ?? null,
+      diet_type: (data.diet_type as any) ?? null,
+      injuries: data.injuries ?? null,
+      sleep_hours: data.sleep_hours ?? null,
+      stress_level: (data.stress_level as any) ?? null,
+      cardio_preference: (data.cardio_preference as any) ?? null,
     },
     goals: {
       calories: data.calorie_goal ?? 1800,
@@ -190,6 +252,8 @@ export async function updateUserProfile(
 
   if (updates.name !== undefined) payload.full_name = updates.name;
   if (updates.onboarding_complete !== undefined) payload.onboarding_complete = updates.onboarding_complete;
+  if (updates.app_mode !== undefined) payload.app_mode = updates.app_mode;
+  if (updates.dark_mode !== undefined) payload.dark_mode = updates.dark_mode;
 
   if (hp) {
     let finalWeight = hp.weight;
@@ -208,6 +272,15 @@ export async function updateUserProfile(
     payload.height_cm = finalHeight ?? null;
     payload.goal = hp.goal ?? null;
     payload.health_conditions = hp.conditions ?? [];
+    payload.experience_level = hp.experience_level ?? null;
+    payload.activity_level = hp.activity_level ?? null;
+    payload.available_days = hp.available_days ?? null;
+    payload.equipment = hp.equipment ?? null;
+    payload.diet_type = hp.diet_type ?? null;
+    payload.injuries = hp.injuries ?? null;
+    payload.sleep_hours = hp.sleep_hours ?? null;
+    payload.stress_level = hp.stress_level ?? null;
+    payload.cardio_preference = hp.cardio_preference ?? null;
   }
 
   if (updates.goals) {

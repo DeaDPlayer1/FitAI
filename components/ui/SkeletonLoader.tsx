@@ -23,7 +23,7 @@ const SkeletonLoaderComponent = ({ width = '100%', height = 20, radius, borderRa
   }, [opacity]);
 
   return (
-    <Animated.View style={[styles.skeleton, { width, height, borderRadius: radius ?? borderRadius ?? theme.radius.md, opacity }, style]} />
+    <Animated.View style={[styles.skeleton, { width, height, borderRadius: radius ?? borderRadius ?? theme.radius.md, opacity } as any, style]} />
   );
 };
 

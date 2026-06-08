@@ -16,16 +16,22 @@ import Animated, {
 
 const { width } = Dimensions.get('window');
 
-const TABS = [
-  { id: 'index', label: 'Home', icon: 'grid' },
-  { id: 'train', label: 'Pulse AI', icon: 'cpu' },
-  { id: 'food', label: 'Nutrition', icon: 'coffee' },
-  { id: 'profile', label: 'Profile', icon: 'user' },
-];
+const TAB_CONFIG: Record<string, { label: string; icon: string }> = {
+  index: { label: 'Home', icon: 'grid' },
+  train: { label: 'Train', icon: 'zap' },
+  food: { label: 'Nutrition', icon: 'coffee' },
+  profile: { label: 'Profile', icon: 'user' },
+  coach: { label: 'Coach', icon: 'message-circle' },
+  nutrition: { label: 'Nutrition', icon: 'coffee' },
+  progress: { label: 'Progress', icon: 'trending-up' },
+};
 
 export default function TabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const [visible, setVisible] = useState(true);
+
+  const currentRoute = state.routes[state.index]?.name;
+  const isCoachScreen = currentRoute === 'coach';
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
@@ -43,7 +49,9 @@ export default function TabBar({ state, navigation }: BottomTabBarProps) {
     };
   }, []);
 
-  if (!visible) return null;
+  if (!visible || isCoachScreen) return null;
+
+  const visibleTabs = state.routes.filter(r => TAB_CONFIG[r.name]).slice(0, 5);
 
   return (
     <View style={[styles.container, { bottom: insets.bottom > 0 ? insets.bottom : 12 }]} pointerEvents="box-none">
@@ -53,26 +61,19 @@ export default function TabBar({ state, navigation }: BottomTabBarProps) {
       </View>
 
       <View style={styles.tabsContainer}>
-        {TABS.map((tab) => {
-          const routeIndex = state.routes.findIndex(r => r.name === tab.id);
-          const isActive = routeIndex !== -1 && state.index === routeIndex;
+        {visibleTabs.map((route) => {
+          const config = TAB_CONFIG[route.name];
+          const isActive = state.index === state.routes.indexOf(route);
 
           return (
             <TabItem 
-              key={tab.id} 
-              tab={tab} 
+              key={route.name} 
+              tab={{ id: route.name, ...config }} 
               isActive={isActive} 
               onPress={() => {
-                if (routeIndex !== -1) {
+                if (!isActive) {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  const event = navigation.emit({
-                    type: 'tabPress',
-                    target: state.routes[routeIndex].key,
-                    canPreventDefault: true,
-                  });
-                  if (!isActive && !event.defaultPrevented) {
-                    navigation.navigate(tab.id);
-                  }
+                  navigation.navigate(route.name);
                 }
               }} 
             />

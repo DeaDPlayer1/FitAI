@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, TextInput, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useWorkoutTrackingStore } from '../../store/workoutTrackingStore';
 import { useUserStore } from '../../store/userStore';
@@ -10,14 +10,16 @@ import { Feather } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { theme } from '../../constants/theme';
 import { SkeletonLoader } from '../../components/ui/SkeletonLoader';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 
 export default function ActiveWorkoutScreen() {
   const router = useRouter();
   const { templateId } = useLocalSearchParams();
   const { user } = useUserStore();
-  const { workoutName, exercises, startWorkout, endWorkout } = useWorkoutTrackingStore();
+  const { workoutName, exercises, startWorkout, endWorkout, stopElapsedTimer, clearRestTimer, getElapsedFormatted } = useWorkoutTrackingStore();
   const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newExName, setNewExName] = useState('');
 
   useEffect(() => {
     if (templateId) {
@@ -27,6 +29,10 @@ export default function ActiveWorkoutScreen() {
     } else {
       setLoading(false);
     }
+    return () => {
+      stopElapsedTimer();
+      clearRestTimer();
+    };
   }, [templateId]);
 
   const initSession = async () => {
@@ -49,8 +55,9 @@ export default function ActiveWorkoutScreen() {
           id: se.id,
           exerciseId: se.exercise_id,
           name: se.exercises?.name || 'Exercise',
+          notes: '',
           sectionName: se.section_name,
-          restTimeSeconds: 90, // Default
+          restTimeSeconds: 90,
           sets: data.sets
             .filter((s: any) => s.session_exercise_id === se.id)
             .map((s: any) => {
@@ -70,7 +77,7 @@ export default function ActiveWorkoutScreen() {
         };
       });
 
-      startWorkout(data.session.id, data.session.name, storeExercises);
+      startWorkout(data.session.id, user?.id || '', data.session.name, storeExercises);
     } catch (err: any) {
       console.error('Error initializing session:', err);
       Alert.alert('Workout Error', err.message || 'Failed to start workout. Check your database connections.');
@@ -80,13 +87,49 @@ export default function ActiveWorkoutScreen() {
     }
   };
 
-  const handleFinish = () => {
+  const handleAddExercise = async () => {
+    try {
+      const exId = `temp-${Date.now()}`;
+      const newExercise = {
+        id: exId,
+        exerciseId: exId,
+        name: newExName.trim(),
+        sectionName: 'Added',
+        restTimeSeconds: 90,
+        notes: '',
+        sets: [{ id: `set-${Date.now()}`, setNumber: 1, weight: '', reps: '', rir: '', isCompleted: false }],
+      };
+      useWorkoutTrackingStore.getState().exercises.push(newExercise);
+      useWorkoutTrackingStore.getState().exercises = [...useWorkoutTrackingStore.getState().exercises];
+      setShowAddModal(false);
+      setNewExName('');
+    } catch (err) {
+      Alert.alert('Error', 'Failed to add exercise.');
+    }
+  };
+
+  const handleFinish = async () => {
+    const store = useWorkoutTrackingStore.getState();
+    const currentSessionId = store.sessionId;
+    const currentElapsed = store.elapsedSeconds;
+    const completedSets = store.exercises.filter(e => e.sets.some(s => s.isCompleted)).length;
+
     Alert.alert('Finish Workout', 'Ready to save your progress?', [
       { text: 'Cancel', style: 'cancel' },
       { 
         text: 'Finish', 
         style: 'default',
-        onPress: () => {
+        onPress: async () => {
+          try {
+            if (currentSessionId) {
+              await WorkoutService.completeSession(currentSessionId, {
+                duration_seconds: currentElapsed,
+                exercises_completed: completedSets,
+              });
+            }
+          } catch (err) {
+            console.error('Failed to save session:', err);
+          }
           endWorkout();
           router.replace('/(tabs)/workout');
         }
@@ -149,72 +192,100 @@ export default function ActiveWorkoutScreen() {
   }
 
   return (
-    <Animated.View style={{ flex: 1 }} entering={FadeIn}>
+    <Animated.View style={[styles.safeArea, { backgroundColor: '#FFFFFF' }]} entering={FadeIn}>
       <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-          <Feather name="chevron-down" size={28} color="#111827" />
-        </TouchableOpacity>
-        
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.workoutName}>{workoutName || 'Active Workout'}</Text>
-          <Text style={styles.timer}>00:00</Text>
+        {/* Header — minimal, dark focus mode */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => {
+            Alert.alert('End Workout?', 'Your progress will be lost if you go back.', [
+              { text: 'Stay', style: 'cancel' },
+              { text: 'Discard', style: 'destructive', onPress: () => router.back() },
+            ]);
+          }} style={styles.iconButton}>
+            <Feather name="chevron-down" size={24} color="#1B1B1F" />
+          </TouchableOpacity>
+
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.workoutName}>{workoutName || 'Active Workout'}</Text>
+            <Text style={styles.timer}>{getElapsedFormatted()}</Text>
+          </View>
+
+          <TouchableOpacity onPress={handleFinish} style={styles.finishButton}>
+            <Text style={styles.finishText}>Finish</Text>
+          </TouchableOpacity>
         </View>
 
-        <TouchableOpacity onPress={handleFinish} style={styles.finishButton}>
-          <Text style={styles.finishText}>Finish</Text>
-        </TouchableOpacity>
-      </View>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {exercises.map((exercise, index) => (
+            <View key={exercise.id}>
+              {index === 0 || exercises[index - 1].sectionName !== exercise.sectionName ? (
+                <Text style={styles.sectionHeader}>{exercise.sectionName || 'Exercises'}</Text>
+              ) : null}
+              <ExerciseCard exercise={exercise} />
+            </View>
+          ))}
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {exercises.map((exercise, index) => (
-          <View key={exercise.id}>
-            {index === 0 || exercises[index - 1].sectionName !== exercise.sectionName ? (
-              <Text style={styles.sectionHeader}>{exercise.sectionName || 'Exercises'}</Text>
-            ) : null}
-            <ExerciseCard exercise={exercise} />
+          <TouchableOpacity style={styles.addExerciseButton} onPress={() => setShowAddModal(true)}>
+            <Feather name="plus" size={20} color={theme.colors.primary} />
+            <Text style={styles.addExerciseText}>Add Exercise</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        <Modal visible={showAddModal} transparent animationType="fade" onRequestClose={() => setShowAddModal(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Add Exercise</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Exercise name"
+                placeholderTextColor="#999"
+                value={newExName}
+                onChangeText={setNewExName}
+                autoFocus
+              />
+              <View style={styles.modalButtons}>
+                <TouchableOpacity onPress={() => setShowAddModal(false)} style={styles.modalCancel}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleAddExercise} style={styles.modalConfirm} disabled={!newExName.trim()}>
+                  <Text style={styles.modalConfirmText}>Add</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
-        ))}
+        </Modal>
 
-        <TouchableOpacity style={styles.addExerciseButton}>
-          <Feather name="plus" size={20} color="#10B981" />
-          <Text style={styles.addExerciseText}>Add Exercise</Text>
-        </TouchableOpacity>
-      </ScrollView>
-
-      <RestTimerOverlay />
+        <RestTimerOverlay />
       </SafeAreaView>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F9FAFB' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'white' },
-  loadingText: { marginTop: 12, color: '#6B7280', fontWeight: '600' },
+  safeArea: { flex: 1, backgroundColor: '#FFFFFF' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF' },
+  loadingText: { marginTop: 12, color: theme.colors.text.secondary, fontWeight: '600' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingVertical: 12,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderColor: '#E5E7EB',
   },
   iconButton: { padding: 4 },
   headerTitleContainer: { alignItems: 'center' },
-  workoutName: { fontSize: 18, fontWeight: '800', color: '#111827' },
-  timer: { fontSize: 14, color: '#10B981', fontWeight: '700', marginTop: 2 },
-  finishButton: { backgroundColor: '#10B981', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
-  finishText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
-  scrollContent: { padding: 16, paddingBottom: 120 },
+  workoutName: { fontSize: theme.font.size.title, fontWeight: '700', color: theme.colors.text.primary },
+  timer: { fontSize: theme.font.size.caption, color: theme.colors.primary, fontWeight: '700', marginTop: 2, fontVariant: ['tabular-nums'] },
+  finishButton: { backgroundColor: theme.colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: theme.radius.pill },
+  finishText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
+  scrollContent: { padding: 20, paddingBottom: 120 },
   sectionHeader: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#9CA3AF',
+    fontSize: theme.font.size.micro,
+    fontWeight: '700',
+    color: theme.colors.text.secondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 1.5,
     marginBottom: 12,
     marginTop: 8,
     marginLeft: 4,
@@ -223,13 +294,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     padding: 16,
-    borderRadius: 16,
+    borderRadius: theme.radius.lg,
     marginTop: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: theme.colors.border.subtle,
     borderStyle: 'dashed',
   },
-  addExerciseText: { color: '#10B981', fontWeight: '700', fontSize: 16, marginLeft: 8 },
+  addExerciseText: { color: theme.colors.primary, fontWeight: '600', fontSize: 15, marginLeft: 8 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 40 },
+  modalContent: { backgroundColor: 'white', borderRadius: 20, padding: 24, width: '100%', maxWidth: 400 },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 16, color: '#1B1B1F' },
+  modalInput: { borderWidth: 1, borderColor: '#E5E5EA', borderRadius: 12, padding: 14, fontSize: 16, color: '#1B1B1F', marginBottom: 20 },
+  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+  modalCancel: { paddingVertical: 10, paddingHorizontal: 20 },
+  modalCancelText: { fontSize: 15, fontWeight: '600', color: '#8E8E93' },
+  modalConfirm: { backgroundColor: theme.colors.primary, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
+  modalConfirmText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
 });

@@ -1,569 +1,253 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View, Text, ScrollView, TouchableOpacity, Switch,
-  StyleSheet, StatusBar, Alert, Dimensions, Pressable, ActivityIndicator
-} from 'react-native';
+import React, { useEffect, useCallback, useMemo } from 'react';
+import { View, Text, ScrollView, StatusBar, Alert, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import Card from '@/components/ui/Card';
-import { FadeInView } from '@/components/ui/FadeInView';
-import ConsistencyHeatmap from '@/components/ui/ConsistencyHeatmap';
-import { signOutUser, updateUserProfile } from '@/lib/auth';
+import { signOutUser, getCurrentUserProfile } from '@/lib/auth';
 import { useUserStore } from '@/store/userStore';
+import { useProfileStore } from '@/store/profileStore';
 import { useWorkoutStore } from '@/store/workoutStore';
 import { useNutritionStore } from '@/store/nutritionStore';
-import { theme } from '@/constants/theme';
+import { useTheme } from '@/components/ThemeProvider';
+import SectionHeader from '@/components/ui/SectionHeader';
 
-const { width: screenWidth } = Dimensions.get('window');
-
-type QuickAction = {
-  icon: React.ComponentProps<typeof Feather>['name'];
-  label: string;
-  route?: string;
-  action?: string;
-};
-
-const QUICK_ACTIONS: QuickAction[] = [
-  { icon: 'edit-3', label: 'Edit Profile', route: '/modals/edit-settings' },
-  { icon: 'target', label: 'Goals', route: '/modals/edit-settings' },
-  { icon: 'bar-chart-2', label: 'Progress', route: '/(tabs)/stats' },
-  { icon: 'download', label: 'Export Data', action: 'export' },
-  { icon: 'bell', label: 'Notifications', action: 'notifications' },
-  { icon: 'help-circle', label: 'Support', action: 'support' },
-];
-
-const CONDITION_OPTIONS = [
-  { id: 'CKD', label: 'CKD', description: 'Chronic Kidney Disease' },
-  { id: 'Lupus', label: 'Lupus', description: 'Systemic Lupus Erythematosus' },
-  { id: 'Diabetes', label: 'Diabetes', description: 'Type 1 or Type 2' },
-  { id: 'Hypertension', label: 'Hypertension', description: 'High Blood Pressure' },
-  { id: 'PCOS', label: 'PCOS', description: 'Polycystic Ovary Syndrome' },
-  { id: 'Thyroid', label: 'Thyroid', description: 'Hypo/Hyperthyroidism' },
-];
+import ProfileHero from '@/components/ui/profile/ProfileHero';
+import AthleteIdentityCard from '@/components/ui/profile/AthleteIdentityCard';
+import BodyGoalMetrics from '@/components/ui/profile/BodyGoalMetrics';
+import FitnessJourney from '@/components/ui/profile/FitnessJourney';
+import Achievements from '@/components/ui/profile/Achievements';
+import SettingsPersonalization from '@/components/ui/profile/SettingsPersonalization';
 
 const HEALTH_AWARE_KEY = '@fitai_health_aware_coaching';
 
 export default function ProfileScreen() {
+  const theme = useTheme();
   const router = useRouter();
   const { user, setUser } = useUserStore();
-  const { workoutLogs } = useWorkoutStore();
-  const { calorieGoal, getTotalCalories, getTotalProtein } = useNutritionStore();
+  const { workoutLogs, fetchWorkoutLogs } = useWorkoutStore();
+  const { calorieGoal } = useNutritionStore();
+  const {
+    achievements, milestones, recoveryLogs, activityDays,
+    fetchAll,
+  } = useProfileStore();
 
-  const [healthAware, setHealthAware] = useState(() => user?.health_profile?.conditions && user.health_profile.conditions.length > 0);
-  const [selectedConditions, setSelectedConditions] = useState<string[]>([]);
-  const [conditionsLoading, setConditionsLoading] = useState(false);
-  const [healthSettingsLoaded, setHealthSettingsLoaded] = useState(false);
+  const [healthAware, setHealthAware] = React.useState(false);
+  const [selectedConditions, setSelectedConditions] = React.useState<string[]>([]);
+
+  const refreshUserProfile = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const fresh = await getCurrentUserProfile(user.id);
+      setUser(fresh);
+    } catch (e) {
+      console.error('Failed to refresh profile:', e);
+    }
+  }, [user?.id, setUser]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) {
+        refreshUserProfile();
+        fetchAll(user.id);
+        fetchWorkoutLogs(user.id);
+      }
+    }, [user?.id, fetchAll, fetchWorkoutLogs, refreshUserProfile])
+  );
 
   useEffect(() => {
-    AsyncStorage.getItem(HEALTH_AWARE_KEY).then(val => {
+    AsyncStorage.getItem(HEALTH_AWARE_KEY).then((val) => {
       setHealthAware(val === 'true');
     });
     if (user?.health_profile?.conditions) {
       setSelectedConditions(user.health_profile.conditions);
     }
-    setHealthSettingsLoaded(true);
   }, [user?.health_profile?.conditions]);
 
-  const initials = user?.name
-    ? user.name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)
-    : 'U';
+  const onRefresh = useCallback(async () => {
+    if (user?.id) await fetchAll(user.id);
+  }, [user?.id, fetchAll]);
 
-  const workoutDates = workoutLogs.map(log => log.logged_at);
+  if (!user) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.bg.primary, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
 
-  const handleQuickAction = (item: QuickAction) => {
-    if (item.route) {
-      router.push(item.route as never);
-    } else if (item.action) {
-      Alert.alert('Coming Soon', `${item.label} will be available in a future update.`);
+  const isAiTrainer = user.app_mode === 'ai_trainer';
+
+  const currentStreak = useMemo(() => {
+    if (!workoutLogs?.length) return 0;
+    const uniqueDays = new Set<string>();
+    workoutLogs.forEach((log) => {
+      uniqueDays.add(log.logged_at.slice(0, 10));
+    });
+    const sorted = [...uniqueDays].sort().reverse();
+    let streak = 0;
+    const today = new Date();
+    for (let i = 0; i < sorted.length; i++) {
+      const expected = new Date(today);
+      expected.setDate(expected.getDate() - i);
+      const expectedStr = expected.toISOString().slice(0, 10);
+      if (sorted[i] === expectedStr) {
+        streak++;
+      } else {
+        break;
+      }
     }
-  };
+    return streak;
+  }, [workoutLogs]);
 
-  const toggleHealthAware = async (value: boolean) => {
-    setHealthAware(value);
-    await AsyncStorage.setItem(HEALTH_AWARE_KEY, String(value));
-  };
+  const identityMetrics = [
+    {
+      icon: 'activity' as const,
+      label: 'WEIGHT',
+      value: user.health_profile?.weight ? `${user.health_profile.weight}${user.health_profile.weightUnit === 'lbs' ? 'lb' : 'kg'}` : '—',
+      color: theme.colors.primary,
+      softColor: theme.colors.primarySoft,
+      gradient: [theme.colors.primarySoft, '#FFFFFF'] as [string, string],
+    },
+    {
+      icon: 'award' as const,
+      label: 'STREAK',
+      value: `${currentStreak} day${currentStreak !== 1 ? 's' : ''}`,
+      color: theme.colors.warning,
+      softColor: theme.colors.warningSoft,
+      gradient: [theme.colors.warningSoft, '#FFFFFF'] as [string, string],
+    },
+    {
+      icon: 'heart' as const,
+      label: 'CONSISTENCY',
+      value: activityDays.filter((d) => d.workout_completed).length > 0 ? `${Math.round(activityDays.filter((d) => d.workout_completed).length / Math.max(activityDays.length, 1) * 100)}%` : '—',
+      color: theme.colors.success,
+      softColor: theme.colors.successSoft,
+      gradient: [theme.colors.successSoft, '#FFFFFF'] as [string, string],
+    },
+  ];
 
-  const toggleCondition = async (conditionId: string) => {
-    const currentUser = useUserStore.getState().user;
-    if (!currentUser?.id) return;
-    const prev = selectedConditions;
-    const updated = prev.includes(conditionId)
-      ? prev.filter(c => c !== conditionId)
-      : [...prev, conditionId];
-    setSelectedConditions(updated);
-    setConditionsLoading(true);
-    try {
-      await updateUserProfile(currentUser.id, {
-        ...currentUser,
-        health_profile: {
-          ...currentUser.health_profile,
-          conditions: updated,
-        },
-      } as any);
-      useUserStore.getState().setUser({
-        ...currentUser,
-        health_profile: {
-          ...currentUser.health_profile,
-          conditions: updated,
-        },
-      });
-    } catch (e: any) {
-      Alert.alert('Error', 'Failed to save conditions');
-      setSelectedConditions(prev);
-    } finally {
-      setConditionsLoading(false);
-    }
-  };
+  const bodyStats: {
+    icon: React.ComponentProps<typeof Feather>['name'];
+    label: string;
+    value: string;
+    color?: string;
+  }[] = [
+    { icon: 'maximize', label: 'Height', value: user.health_profile?.height ? `${user.health_profile.height} ${user.health_profile.heightUnit}` : '—', color: theme.colors.primary },
+    { icon: 'activity', label: 'Weight', value: user.health_profile?.weight ? `${user.health_profile.weight}${user.health_profile.weightUnit === 'lbs' ? 'lb' : 'kg'}` : '—', color: theme.colors.primary },
+    { icon: 'calendar', label: 'Age', value: user.health_profile?.age ? `${user.health_profile.age}` : '—', color: theme.colors.primary },
+    { icon: 'zap', label: 'Calories', value: `${calorieGoal} kcal`, color: theme.colors.warning },
+    { icon: 'droplet', label: 'Water', value: `${user.goals?.water || 8} glasses`, color: '#60A5FA' },
+    { icon: 'target', label: 'Goal', value: user.health_profile?.goal ? user.health_profile.goal.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Set goal', color: theme.colors.success },
+  ];
 
-  const handleSignOut = () => {
+  const journeyEntries = useMemo(() => milestones.map((m) => ({
+    id: m.id,
+    icon: (m.icon || 'check-circle') as React.ComponentProps<typeof Feather>['name'],
+    title: m.title,
+    subtitle: m.subtitle,
+    date: new Date(m.achieved_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    color: theme.colors.primary,
+  })), [milestones]);
+
+  const achievementItems = useMemo(() => achievements.map((a) => ({
+    id: a.id,
+    title: a.title,
+    description: a.description,
+    icon: a.icon,
+    rarity: a.rarity,
+  })), [achievements]);
+
+  const latestRecovery = recoveryLogs[0];
+  const recoveryMetrics: { icon: 'activity' | 'moon' | 'heart'; label: string; value: string; status: 'good' | 'moderate' | 'low' }[] = [
+    { icon: 'activity', label: 'Stress', value: latestRecovery?.stress_level ? `${latestRecovery.stress_level}/10` : '—', status: (latestRecovery?.stress_level && latestRecovery.stress_level <= 4 ? 'good' : latestRecovery?.stress_level && latestRecovery.stress_level <= 7 ? 'moderate' : 'low') as 'good' | 'moderate' | 'low' },
+    { icon: 'moon', label: 'Sleep', value: latestRecovery?.sleep_hours ? `${latestRecovery.sleep_hours}h` : '—', status: (latestRecovery?.sleep_hours && latestRecovery.sleep_hours >= 7 ? 'good' : latestRecovery?.sleep_hours && latestRecovery.sleep_hours >= 5 ? 'moderate' : 'low') as 'good' | 'moderate' | 'low' },
+    { icon: 'heart', label: 'Fatigue', value: latestRecovery?.fatigue ? `${latestRecovery.fatigue}/10` : '—', status: (latestRecovery?.fatigue && latestRecovery.fatigue <= 3 ? 'good' : latestRecovery?.fatigue && latestRecovery.fatigue <= 6 ? 'moderate' : 'low') as 'good' | 'moderate' | 'low' },
+  ];
+
+  const settingsItems = [
+    { icon: 'user' as const, label: 'Account', subtitle: 'Name, bio, fitness profile', color: theme.colors.primary, onPress: () => router.push('/modals/edit-settings' as never) },
+    { icon: 'droplet' as const, label: 'Daily Water Goal', subtitle: `${user.goals?.water || 8} glasses`, color: '#60A5FA', onPress: () => router.push('/modals/edit-settings' as never) },
+    { icon: 'bell' as const, label: 'Notifications', subtitle: 'Push and in-app reminders', color: theme.colors.warning, onPress: () => Alert.alert('Coming Soon', 'Notifications coming soon.') },
+    { icon: 'bar-chart-2' as const, label: 'Progress', subtitle: 'View your transformation', color: theme.colors.primary, onPress: () => router.push('/(tabs)/stats' as never) },
+    { icon: 'download' as const, label: 'Export Data', subtitle: 'Download your fitness data', color: theme.colors.text.muted, onPress: () => Alert.alert('Coming Soon', 'Data export coming soon.') },
+    { icon: 'help-circle' as const, label: 'Support', subtitle: 'Help, FAQ, and contact', color: theme.colors.text.muted, onPress: () => Alert.alert('Coming Soon', 'Support page coming soon.') },
+  ];
+
+  const handleSignOut = useCallback(() => {
     Alert.alert('Sign Out', 'Are you sure?', [
       { text: 'Cancel' },
       {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await signOutUser();
-          } catch (e: any) {
-            Alert.alert('Error', e.message);
-          }
-        },
+        text: 'Sign Out', style: 'destructive',
+        onPress: async () => { try { await signOutUser(); } catch (e: any) { Alert.alert('Error', e.message); } },
       },
     ]);
-  };
+  }, []);
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" />
-      
-      {/* Header */}
-      <View style={styles.headerBar}>
-        <Text style={styles.headerTitle}>Profile</Text>
-        <TouchableOpacity 
-          style={styles.settingsBtn}
-          onPress={() => router.push('/settings')}
-        >
-          <Feather name="settings" size={22} color="#1A1A1A" />
-        </TouchableOpacity>
-      </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg.primary }}>
+      <StatusBar barStyle={user?.dark_mode ? 'light-content' : 'dark-content'} />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={false} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
+        contentContainerStyle={{ paddingBottom: 100 }}
+      >
+        <ProfileHero
+          name={user.name}
+          avatarUrl={(user as any).avatar_url}
+          goal={user.health_profile?.goal}
+          fitnessMode={isAiTrainer ? 'AI Trainer' : user.health_profile?.experience_level || undefined}
+          currentWeek={1}
+          totalWeeks={12}
+          motivationalSubtitle={
+            isAiTrainer
+              ? 'Your AI-powered training journey'
+              : workoutLogs?.length > 10
+                ? 'Consistency is your superpower.'
+                : 'Building momentum, one day at a time.'
+          }
 
-      <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <FadeInView>
-          {/* Profile Identity */}
-          <View style={styles.identitySection}>
-            <View style={styles.avatarLarge}>
-              <Text style={styles.avatarTextLarge}>{initials}</Text>
+          onAvatarPress={() => router.push('/modals/edit-settings' as never)}
+        />
+
+        <View style={{ marginTop: 24, marginBottom: 12 }}>
+          <SectionHeader title="Athlete Identity" />
+        </View>
+        <AthleteIdentityCard metrics={identityMetrics} />
+
+        <View style={{ marginTop: 28, marginBottom: 12 }}>
+          <SectionHeader title="Body & Goals" />
+        </View>
+        <BodyGoalMetrics stats={bodyStats} />
+
+        {journeyEntries.length > 0 && (
+          <>
+            <View style={{ marginTop: 28, marginBottom: 12 }}>
+              <SectionHeader title="Your Journey" />
             </View>
-            <View style={styles.identityText}>
-              <Text style={styles.name}>{user?.name || 'User'}</Text>
-              <View style={styles.goalBadge}>
-                <Text style={styles.goalBadgeText}>
-                  {(user?.health_profile?.goal || 'General Fitness').replace('_', ' ')}
-                </Text>
-              </View>
+            <FitnessJourney entries={journeyEntries} />
+          </>
+        )}
+
+        {achievementItems.length > 0 && (
+          <>
+            <View style={{ marginTop: 28, marginBottom: 12 }}>
+              <SectionHeader title="Achievements" />
             </View>
-          </View>
+            <Achievements items={achievementItems} />
+          </>
+        )}
 
-          {/* Stats Grid */}
-          <View style={styles.statsGrid}>
-            <TouchableOpacity style={styles.statCardWrapper} onPress={() => router.push('/modals/edit-settings')}>
-              <Card style={styles.statCard} padding={16}>
-                <Text style={styles.statValue}>{user?.health_profile?.weight || '--'}</Text>
-                <Text style={styles.statLabel}>{user?.health_profile?.weightUnit || 'kg'}</Text>
-              </Card>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.statCardWrapper} onPress={() => router.push('/modals/edit-settings')}>
-              <Card style={styles.statCard} padding={16}>
-                <Text style={styles.statValue}>{user?.health_profile?.height || '--'}</Text>
-                <Text style={styles.statLabel}>{user?.health_profile?.heightUnit || 'cm'}</Text>
-              </Card>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.statCardWrapper} onPress={() => router.push('/modals/edit-settings')}>
-              <Card style={styles.statCard} padding={16}>
-                <Text style={styles.statValue}>{user?.health_profile?.age || '--'}</Text>
-                <Text style={styles.statLabel}>Years</Text>
-              </Card>
-            </TouchableOpacity>
-          </View>
+        <View style={{ marginTop: 28, marginBottom: 12 }}>
+          <SectionHeader title="Settings" />
+        </View>
+        <SettingsPersonalization items={settingsItems} onSignOut={handleSignOut} />
 
-          {/* Quick Actions Grid */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Quick Actions</Text>
-            <View style={styles.quickActionsGrid}>
-              {QUICK_ACTIONS.map((item) => (
-                <Pressable
-                  key={item.label}
-                  style={styles.quickActionItem}
-                  onPress={() => handleQuickAction(item)}
-                  delayPressIn={100}
-                >
-                  <View style={styles.quickActionIconCircle}>
-                    <Feather name={item.icon} size={20} color={theme.colors.accent.brand} />
-                  </View>
-                  <Text style={styles.quickActionLabel}>{item.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-
-          {/* Consistency Heatmap */}
-          <View style={styles.section}>
-            <ConsistencyHeatmap workoutDates={workoutDates} />
-          </View>
-
-          {/* Nutrition Macros Overview */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Today's Nutrition</Text>
-            <Card padding={20} style={styles.nutritionCard}>
-              <View style={styles.macroRow}>
-                <View style={styles.macroCol}>
-                  <Text style={styles.macroVal}>{getTotalCalories()}</Text>
-                  <Text style={styles.macroSub}>of {calorieGoal} kcal</Text>
-                </View>
-                <View style={styles.macroDivider} />
-                <View style={styles.macroCol}>
-                  <Text style={styles.macroVal}>{getTotalProtein()}g</Text>
-                  <Text style={styles.macroSub}>Protein</Text>
-                </View>
-              </View>
-            </Card>
-          </View>
-
-          {/* Health Conditions */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Health Conditions</Text>
-            <Card padding={20} style={styles.healthCard}>
-              <View style={styles.healthToggleRow}>
-                <View style={styles.healthToggleInfo}>
-                  <Feather name="heart" size={20} color={theme.colors.accent.brand} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.healthToggleLabel}>Health-Aware Coaching</Text>
-                    <Text style={styles.healthToggleSub}>
-                      Pulse AI adapts to your conditions
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={healthAware}
-                  onValueChange={toggleHealthAware}
-                  trackColor={{ true: theme.colors.accent.primary + '60', false: '#E5E7EB' }}
-                  thumbColor={healthAware ? theme.colors.accent.primary : '#FFF'}
-                />
-              </View>
-
-              {healthAware && (
-                <View style={styles.conditionsList}>
-                  <Text style={styles.conditionsHint}>
-                    Select your conditions so Pulse AI can personalize your coaching:
-                  </Text>
-                  {CONDITION_OPTIONS.map(option => {
-                    const isSelected = selectedConditions.includes(option.id);
-                    return (
-                      <Pressable
-                        key={option.id}
-                        style={[styles.conditionItem, isSelected && styles.conditionItemActive]}
-                        onPress={() => toggleCondition(option.id)}
-                        disabled={conditionsLoading}
-                      >
-                        <View style={[styles.conditionCheckbox, isSelected && styles.conditionCheckboxActive]}>
-                          {isSelected && <Feather name="check" size={12} color="white" />}
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.conditionLabel, isSelected && styles.conditionLabelActive]}>
-                            {option.label}
-                          </Text>
-                          <Text style={styles.conditionDesc}>{option.description}</Text>
-                        </View>
-                        {conditionsLoading && <ActivityIndicator size="small" color={theme.colors.accent.primary} />}
-                      </Pressable>
-                    );
-                  })}
-                  <Text style={styles.conditionsDisclaimer}>
-                    This information helps Pulse AI personalize your coaching. It is not shared and does not replace medical advice.
-                  </Text>
-                </View>
-              )}
-            </Card>
-          </View>
-
-          {/* Sign Out */}
-          <Pressable style={styles.logoutBtn} onPress={handleSignOut}>
-            <Feather name="log-out" size={20} color="#EF4444" />
-            <Text style={styles.logoutText}>Sign Out</Text>
-          </Pressable>
-
-        </FadeInView>
+        <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F9FAFB' },
-  screen: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingBottom: 100 },
-  
-  headerBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#F9FAFB',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontFamily: theme.font.family.heading,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  settingsBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'white',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...theme.shadow.card,
-  },
 
-  identitySection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    marginBottom: 24,
-  },
-  avatarLarge: { 
-    width: 72, 
-    height: 72, 
-    borderRadius: 36, 
-    backgroundColor: theme.colors.accent.brand, 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    marginRight: 16,
-    ...theme.shadow.button,
-  },
-  avatarTextLarge: { color: 'white', fontSize: 28, fontFamily: theme.font.family.heading, fontWeight: '800' },
-  identityText: { flex: 1 },
-  name: { fontSize: 24, fontFamily: theme.font.family.heading, fontWeight: '800', color: '#111827' },
-  goalBadge: { 
-    marginTop: 6, 
-    paddingHorizontal: 12, 
-    paddingVertical: 4, 
-    borderRadius: 16, 
-    backgroundColor: theme.colors.accent.lavender + '30',
-    alignSelf: 'flex-start'
-  },
-  goalBadgeText: { fontSize: 13, fontFamily: theme.font.family.bold, color: theme.colors.accent.brand, textTransform: 'capitalize' },
-
-  statsGrid: { flexDirection: 'row', gap: 12, marginBottom: 24 },
-  statCardWrapper: { flex: 1 },
-  statCard: { alignItems: 'center', backgroundColor: 'white' },
-  statValue: { fontSize: 20, fontFamily: theme.font.family.heading, fontWeight: '800', color: '#111827' },
-  statLabel: { fontSize: 12, fontFamily: theme.font.family.medium, color: theme.colors.text.muted, marginTop: 2 },
-
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontFamily: theme.font.family.bold,
-    color: '#111827',
-    marginBottom: 12,
-  },
-
-  // Quick Actions
-  quickActionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  quickActionItem: {
-    width: (screenWidth - 44) / 2,
-    flex: undefined,
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
-    gap: 8,
-    ...theme.shadow.soft,
-  },
-  quickActionIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: theme.colors.accent.lavender + '20',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  quickActionLabel: {
-    fontSize: 13,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.secondary,
-  },
-  
-  nutritionCard: {
-    backgroundColor: 'white',
-  },
-  macroRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-  },
-  macroCol: {
-    alignItems: 'center',
-  },
-  macroVal: {
-    fontSize: 24,
-    fontFamily: theme.font.family.heading,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  macroSub: {
-    fontSize: 13,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    marginTop: 4,
-  },
-  macroDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: '#F3F4F6',
-  },
-
-  programCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'white',
-  },
-  programIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: theme.colors.accent.lavender + '20',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-  },
-  programInfo: {
-    flex: 1,
-  },
-  programName: {
-    fontSize: 16,
-    fontFamily: theme.font.family.bold,
-    color: '#111827',
-  },
-  programMeta: {
-    fontSize: 13,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    marginTop: 4,
-  },
-
-  // Health Conditions
-  healthCard: {
-    backgroundColor: 'white',
-  },
-  healthToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  healthToggleInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  healthToggleLabel: {
-    fontSize: 15,
-    fontFamily: theme.font.family.bold,
-    color: '#111827',
-  },
-  healthToggleSub: {
-    fontSize: 12,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    marginTop: 2,
-  },
-  conditionsList: {
-    marginTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 16,
-  },
-  conditionsHint: {
-    fontSize: 13,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    marginBottom: 12,
-    lineHeight: 18,
-  },
-  conditionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    marginBottom: 6,
-  },
-  conditionItemActive: {
-    backgroundColor: theme.colors.accent.lavender + '20',
-  },
-  conditionCheckbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  conditionCheckboxActive: {
-    backgroundColor: theme.colors.accent.primary,
-    borderColor: theme.colors.accent.primary,
-  },
-  conditionLabel: {
-    fontSize: 14,
-    fontFamily: theme.font.family.semibold,
-    color: '#111827',
-  },
-  conditionLabelActive: {
-    color: theme.colors.accent.primary,
-  },
-  conditionDesc: {
-    fontSize: 12,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    marginTop: 1,
-  },
-  conditionsDisclaimer: {
-    fontSize: 11,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    fontStyle: 'italic',
-    marginTop: 12,
-    lineHeight: 16,
-  },
-
-  // Logout
-  logoutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    backgroundColor: '#FEF2F2',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 24,
-  },
-  logoutText: {
-    fontSize: 16,
-    fontFamily: theme.font.family.bold,
-    color: '#EF4444',
-  },
-});

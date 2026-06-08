@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, StyleSheet,
@@ -7,8 +7,12 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
-import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
-
+import Animated, {
+  FadeInUp, FadeInDown,
+  useSharedValue, useAnimatedStyle,
+  withTiming, withDelay, Easing,
+} from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
 import { useUserStore } from '@/store/userStore';
 import { parseFoodInput, analyzeFoodImage, MealLog } from '@/lib/nutritionAI';
@@ -19,17 +23,31 @@ import { syncUserData } from '@/lib/sync';
 
 type Step = 'input' | 'parsing' | 'review';
 
+function AnimatedProgressFill({ pct, color, delay: delayMs }: { pct: number; color: string; delay: number }) {
+  const w = useSharedValue(0);
+  useEffect(() => {
+    w.value = withDelay(delayMs, withTiming(pct, { duration: 600, easing: Easing.out(Easing.quad) }));
+  }, []);
+  const anim = useAnimatedStyle(() => ({ width: `${w.value * 100}%` }));
+  return <Animated.View style={[styles.macroProgressFill, { backgroundColor: color }, anim]} />;
+}
+
 export default function LogFoodModal() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useUserStore();
 
-  const selectedDate = params.date ? new Date(params.date as string) : new Date();
+  const rawDate = Array.isArray(params.date) ? params.date[0] : params.date;
+  const selectedDate = rawDate ? (() => {
+    const d = new Date(rawDate as string);
+    return isNaN(d.getTime()) ? new Date() : d;
+  })() : new Date();
 
   const [step, setStep] = useState<Step>('input');
   const [foodText, setFoodText] = useState('');
   const [parsedMeal, setParsedMeal] = useState<MealLog | null>(null);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [analyzingSource, setAnalyzingSource] = useState<'text' | 'voice' | 'vision'>('text');
 
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
@@ -100,6 +118,8 @@ export default function LogFoodModal() {
 
   const handleConfirm = async () => {
     if (!parsedMeal || !user) return;
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -121,11 +141,12 @@ export default function LogFoodModal() {
       if (error) throw error;
 
       await syncUserData(userId);
-      router.back();
+      router.replace('/(tabs)' as any);
     } catch (err: any) {
       Alert.alert('Error', err.message);
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 
@@ -133,7 +154,7 @@ export default function LogFoodModal() {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
-          <Feather name="x" size={24} color={theme.colors.text} />
+          <Feather name="x" size={24} color={theme.colors.text.primary} />
         </TouchableOpacity>
         <Text style={styles.title}>Log Nutrition</Text>
         <View style={{ width: 44 }} />
@@ -159,7 +180,7 @@ export default function LogFoodModal() {
                   onPressOut={stopRecording}
                   style={[styles.toolBtn, !!recording && styles.toolBtnActive]}
                 >
-                  <Feather name="mic" size={20} color={!!recording ? '#FFF' : theme.colors.primaryDark} />
+                  <Feather name="mic" size={20} color={!!recording ? '#FFF' : theme.colors.primaryDeep} />
                 </TouchableOpacity>
                 <TouchableOpacity 
                   onPress={async () => {
@@ -168,7 +189,7 @@ export default function LogFoodModal() {
                   }}
                   style={styles.toolBtn}
                 >
-                  <Feather name="camera" size={20} color={theme.colors.primaryDark} />
+                  <Feather name="camera" size={20} color={theme.colors.primaryDeep} />
                 </TouchableOpacity>
                 <TouchableOpacity 
                   onPress={async () => {
@@ -177,7 +198,7 @@ export default function LogFoodModal() {
                   }}
                   style={styles.toolBtn}
                 >
-                  <Feather name="image" size={20} color={theme.colors.primaryDark} />
+                  <Feather name="image" size={20} color={theme.colors.primaryDeep} />
                 </TouchableOpacity>
               </View>
 
@@ -196,37 +217,109 @@ export default function LogFoodModal() {
         )}
 
         {step === 'review' && parsedMeal && (
-          <Animated.View entering={FadeInDown} style={styles.reviewCard}>
-            <Text style={styles.reviewHeader}>Summary</Text>
-            
-            <View style={styles.mainStats}>
-              <View style={styles.statBox}>
-                <Text style={styles.statValue}>{parsedMeal.totalCalories}</Text>
-                <Text style={styles.statLabel}>Calories</Text>
+          <Animated.View entering={FadeInDown} style={styles.reviewContainer}>
+            {/* ── Premium Header ── */}
+            <View style={styles.reviewHeader}>
+              <View style={styles.successBadge}>
+                <Feather name="check" size={16} color="#FFFFFF" />
               </View>
-            </View>
-
-            <View style={styles.macroGrid}>
-              <View style={styles.macroItem}>
-                <Text style={styles.macroValue}>{parsedMeal.totalProtein}g</Text>
-                <Text style={styles.macroLabel}>Protein</Text>
+              <View style={styles.reviewHeaderText}>
+                <Text style={styles.reviewHeaderTitle}>Meal Logged</Text>
+                <Text style={styles.reviewHeaderSub}>AI analysis complete</Text>
               </View>
-              <View style={styles.macroItem}>
-                <Text style={styles.macroValue}>{parsedMeal.totalCarbs}g</Text>
-                <Text style={styles.macroLabel}>Carbs</Text>
-              </View>
-              <View style={styles.macroItem}>
-                <Text style={styles.macroValue}>{parsedMeal.totalFat}g</Text>
-                <Text style={styles.macroLabel}>Fat</Text>
-              </View>
-            </View>
-
-            <View style={styles.footerActions}>
-              <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm} disabled={saving}>
-                {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.confirmBtnText}>Log Meal</Text>}
+              <TouchableOpacity onPress={() => setStep('input')} style={styles.editIconBtn} activeOpacity={0.7}>
+                <Feather name="edit-2" size={16} color={theme.colors.text.muted} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.editBtn} onPress={() => setStep('input')}>
-                <Text style={styles.editBtnText}>Edit Entry</Text>
+            </View>
+
+            {/* ── Calorie Hero Card ── */}
+            <LinearGradient
+              colors={[theme.colors.primary, theme.colors.primaryDeep]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1.2 }}
+              style={styles.calorieHero}
+            >
+              <View style={styles.calorieHeroContent}>
+                <View style={styles.mealTag}>
+                  <Feather name="clock" size={10} color="rgba(255,255,255,0.7)" />
+                  <Text style={styles.mealTagText}>
+                    {params.mealType || parsedMeal.mealType || 'Meal'} · {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                </View>
+                <Text style={styles.calorieValue}>{parsedMeal.totalCalories}</Text>
+                <Text style={styles.calorieLabel}>calories</Text>
+                <View style={styles.goalProgress}>
+                  <View style={styles.goalProgressBg}>
+                    {user?.goals?.calories ? (
+                      <View style={[styles.goalProgressFill, { width: `${Math.min((parsedMeal.totalCalories / user.goals.calories) * 100, 100)}%` }]} />
+                    ) : null}
+                  </View>
+                  <Text style={styles.goalProgressText}>
+                    {user?.goals?.calories ? `${Math.round((parsedMeal.totalCalories / user.goals.calories) * 100)}% of daily target` : 'Set a calorie goal in settings'}
+                  </Text>
+                </View>
+              </View>
+            </LinearGradient>
+
+            {/* ── Macro Breakdown ── */}
+            <View style={styles.macroSection}>
+              {[
+                { label: 'Protein', value: parsedMeal.totalProtein, unit: 'g', color: '#FB7185', bgColor: 'rgba(251,113,133,0.12)', pct: (parsedMeal.totalProtein / ((user?.goals?.protein || 150) || 1)) },
+                { label: 'Carbs', value: parsedMeal.totalCarbs, unit: 'g', color: '#F59E0B', bgColor: 'rgba(245,158,11,0.12)', pct: (parsedMeal.totalCarbs / ((user?.goals?.carbs || 250) || 1)) },
+                { label: 'Fat', value: parsedMeal.totalFat, unit: 'g', color: '#3B82F6', bgColor: 'rgba(59,130,246,0.12)', pct: (parsedMeal.totalFat / ((user?.goals?.fat || 65) || 1)) },
+              ].map((macro, i) => (
+                <Animated.View
+                  key={macro.label}
+                  entering={FadeInDown.delay(200 + i * 100)}
+                  style={[styles.macroCard, { backgroundColor: macro.bgColor, borderColor: macro.color + '25' }] as any}
+                >
+                  <View style={styles.macroTop}>
+                    <Text style={[styles.macroValue, { color: macro.color }]}>{macro.value}{macro.unit}</Text>
+                    <Text style={styles.macroPct}>{Math.round(macro.pct * 100)}%</Text>
+                  </View>
+                  <Text style={styles.macroLabel}>{macro.label}</Text>
+                  <View style={styles.macroProgressBg}>
+                    <AnimatedProgressFill pct={Math.min(macro.pct, 1)} color={macro.color} delay={300 + i * 100} />
+                  </View>
+                </Animated.View>
+              ))}
+            </View>
+
+            {/* ── AI Insight ── */}
+            <Animated.View entering={FadeInDown.delay(500)} style={styles.insightCard}>
+              <View style={styles.insightRow}>
+                <Feather name="zap" size={14} color={theme.colors.primary} />
+                <Text style={styles.insightText}>
+                  {parsedMeal.totalProtein < (user?.goals?.protein || 150) * 0.3
+                    ? 'Low protein detected. Consider adding a lean protein source.'
+                    : parsedMeal.totalCarbs > (user?.goals?.carbs || 250) * 0.5
+                    ? 'Higher-carb meal. Balance with protein-rich foods later.'
+                    : 'Great macro balance. Stay hydrated and keep consistent.'}
+                </Text>
+              </View>
+            </Animated.View>
+
+            {/* ── CTAs ── */}
+            <View style={styles.ctaSection}>
+              <TouchableOpacity style={styles.primaryCta} onPress={handleConfirm} disabled={saving} activeOpacity={0.85}>
+                <LinearGradient
+                  colors={[theme.colors.primary, theme.colors.primaryDeep]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.primaryCtaGradient}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Feather name="check" size={18} color="#FFFFFF" />
+                      <Text style={styles.primaryCtaText}>Log Meal</Text>
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryCta} onPress={() => setStep('input')} activeOpacity={0.7}>
+                <Text style={styles.secondaryCtaText}>Edit Entry</Text>
               </TouchableOpacity>
             </View>
           </Animated.View>
@@ -249,7 +342,7 @@ const styles = StyleSheet.create({
     ...theme.shadow.navbar,
   },
   closeBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 20, fontWeight: '800', color: theme.colors.text },
+  title: { fontSize: 20, fontWeight: '800', color: theme.colors.text.primary },
   
   scroll: { flex: 1 },
   scrollContent: { padding: 20 },
@@ -260,14 +353,14 @@ const styles = StyleSheet.create({
     padding: 24,
     ...theme.shadow.card,
   },
-  inputLabel: { fontSize: 18, fontWeight: '800', color: theme.colors.text, marginBottom: 16 },
+  inputLabel: { fontSize: 18, fontWeight: '800', color: theme.colors.text.primary, marginBottom: 16 },
   textArea: {
     backgroundColor: theme.colors.background,
     borderRadius: 20,
     padding: 20,
     fontSize: 16,
     fontWeight: '600',
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     minHeight: 160,
     textAlignVertical: 'top',
   },
@@ -294,38 +387,110 @@ const styles = StyleSheet.create({
   loadingState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 100, gap: 20 },
   loadingText: { fontSize: 14, fontWeight: '700', color: theme.colors.textSecondary },
 
-  reviewCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 28,
-    padding: 24,
-    ...theme.shadow.card,
+  reviewContainer: {
+    gap: 20,
   },
-  reviewHeader: { fontSize: 20, fontWeight: '800', color: theme.colors.text, marginBottom: 24 },
-  mainStats: { alignItems: 'center', marginBottom: 32 },
-  statBox: { alignItems: 'center' },
-  statValue: { fontSize: 48, fontWeight: '900', color: theme.colors.primaryDark, letterSpacing: -1 },
-  statLabel: { fontSize: 14, fontWeight: '700', color: theme.colors.textMuted, textTransform: 'uppercase' },
 
-  macroGrid: { flexDirection: 'row', gap: 12, marginBottom: 40 },
-  macroItem: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
+  reviewHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    paddingVertical: 4,
   },
-  macroValue: { fontSize: 16, fontWeight: '800', color: theme.colors.text },
-  macroLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary },
+  successBadge: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#34C759',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  reviewHeaderText: { flex: 1 },
+  reviewHeaderTitle: {
+    fontSize: 20, fontWeight: '800', color: theme.colors.text.primary,
+  },
+  reviewHeaderSub: {
+    fontSize: 13, fontWeight: '500', color: theme.colors.text.muted, marginTop: 2,
+  },
+  editIconBtn: {
+    width: 40, height: 40, borderRadius: 14,
+    backgroundColor: theme.colors.bg.secondary,
+    alignItems: 'center', justifyContent: 'center',
+  },
 
-  footerActions: { gap: 12 },
-  confirmBtn: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: 18,
-    paddingVertical: 18,
-    alignItems: 'center',
-    ...theme.shadow.button,
+  calorieHero: {
+    borderRadius: 24, padding: 24, overflow: 'hidden', ...theme.shadow.glow,
   },
-  confirmBtnText: { fontSize: 16, fontWeight: '800', color: '#000' },
-  editBtn: { paddingVertical: 12, alignItems: 'center' },
-  editBtnText: { fontSize: 14, fontWeight: '700', color: theme.colors.textSecondary },
+  calorieHeroContent: { gap: 8 },
+  mealTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: 20, alignSelf: 'flex-start',
+  },
+  mealTagText: {
+    fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.75)',
+  },
+  calorieValue: {
+    fontSize: 56, fontWeight: '900', color: '#FFFFFF',
+    letterSpacing: -2, fontVariant: ['tabular-nums'],
+    marginTop: 4,
+  },
+  calorieLabel: {
+    fontSize: 15, fontWeight: '600', color: 'rgba(255,255,255,0.6)',
+    textTransform: 'uppercase', letterSpacing: 1,
+  },
+  goalProgress: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+  goalProgressBg: {
+    flex: 1, height: 4, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 2,
+    overflow: 'hidden',
+  },
+  goalProgressFill: { height: '100%', backgroundColor: '#FFFFFF', borderRadius: 2 },
+  goalProgressText: {
+    fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.6)', minWidth: 110,
+  },
+
+  macroSection: {
+    flexDirection: 'row', gap: 10,
+  },
+  macroCard: {
+    flex: 1, borderRadius: 20, padding: 16, borderWidth: 1, gap: 6,
+  },
+  macroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  macroValue: {
+    fontSize: 20, fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  macroPct: {
+    fontSize: 11, fontWeight: '700', color: theme.colors.text.muted,
+  },
+  macroLabelDefault: {
+    fontSize: 11, fontWeight: '600', color: theme.colors.text.muted,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  macroLabel: {
+    fontSize: 11, fontWeight: '600', color: theme.colors.text.muted,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  macroProgressBg: {
+    height: 3, backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: 2,
+    overflow: 'hidden', marginTop: 4,
+  },
+  macroProgressFill: { height: '100%', borderRadius: 2 },
+
+  insightCard: {
+    backgroundColor: 'rgba(106,73,250,0.06)', borderRadius: 20, padding: 16,
+    borderWidth: 1, borderColor: 'rgba(106,73,250,0.12)',
+  },
+  insightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  insightText: {
+    flex: 1, fontSize: 13, fontWeight: '500', color: theme.colors.text.muted,
+    lineHeight: 19,
+  },
+
+  ctaSection: { gap: 12, paddingBottom: 20 },
+  primaryCta: { borderRadius: 20, overflow: 'hidden', ...theme.shadow.button },
+  primaryCtaGradient: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, paddingVertical: 18, paddingHorizontal: 24,
+  },
+  primaryCtaText: { fontSize: 17, fontWeight: '800', color: '#FFFFFF' },
+  secondaryCta: { alignItems: 'center', paddingVertical: 12 },
+  secondaryCtaText: {
+    fontSize: 14, fontWeight: '700', color: theme.colors.text.muted,
+  },
 });

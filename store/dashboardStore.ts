@@ -27,6 +27,7 @@ interface DashboardState {
   addSteps: (steps: number) => void;
   updateHeartRate: (bpm: number) => void;
   addWeightEntry: (weight: number) => void;
+  reset: () => void;
 }
 
 export const useDashboardStore = create<DashboardState>((set) => ({
@@ -76,4 +77,11 @@ export const useDashboardStore = create<DashboardState>((set) => ({
         { date: new Date().toISOString(), value: weight },
       ].slice(-30),
     })),
+  reset: () => set({
+    calories: { goal: 1800, consumed: 0, burned: 0 },
+    steps: { today: 0, goal: 10000 },
+    workoutTime: { minutes: 0, goal: 45 },
+    weightHistory: [],
+    heartRate: { current: 72, min: 60, max: 140, history: [72] },
+  }),
 }));

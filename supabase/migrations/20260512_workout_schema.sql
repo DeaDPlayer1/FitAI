@@ -111,7 +111,6 @@ CREATE INDEX idx_wss_session_rel ON workout_session_sets(session_id);
 -- ==========================================
 
 CREATE OR REPLACE FUNCTION get_previous_exercise_performance(
-    p_user_id UUID,
     p_exercise_ids UUID[]
 )
 RETURNS TABLE (
@@ -142,7 +141,7 @@ AS $$
             wss.completed_at,
             ROW_NUMBER() OVER(PARTITION BY wss.exercise_id, wss.set_number ORDER BY wss.completed_at DESC) as rn
         FROM workout_session_sets wss
-        WHERE wss.user_id = p_user_id
+        WHERE wss.user_id = auth.uid()
           AND wss.exercise_id = ANY(p_exercise_ids)
           AND wss.is_completed = true
     ) sub

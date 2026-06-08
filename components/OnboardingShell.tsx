@@ -88,7 +88,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.bg.primary,
-    paddingHorizontal: theme.layout.screenPaddingH,
+    paddingHorizontal: theme.layout.screenPadding,
   },
   flex: { flex: 1 },
   topRow: {

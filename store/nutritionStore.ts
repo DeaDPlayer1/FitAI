@@ -1,4 +1,7 @@
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const NUTRITION_CACHE_KEY = '@pulse_ai_nutrition_cache';
 
 export interface FoodItem {
   name: string;
@@ -87,3 +90,31 @@ export const useNutritionStore = create<NutritionState>((set, get) => ({
   getTotalFats: () =>
     get().todayFoodLogs.reduce((sum, m) => sum + (m.fat_g || 0), 0),
 }));
+
+// ── Persist to AsyncStorage on changes (debounced 500ms) ──
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+useNutritionStore.subscribe((state) => {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    AsyncStorage.setItem(NUTRITION_CACHE_KEY, JSON.stringify({
+      todayFoodLogs: state.todayFoodLogs,
+      calorieGoal: state.calorieGoal,
+      mealTypes: state.mealTypes,
+    })).catch(() => {});
+  }, 500);
+});
+
+// ── Hydrate from AsyncStorage on load ──
+export async function hydrateNutritionCache(): Promise<void> {
+  try {
+    const data = await AsyncStorage.getItem(NUTRITION_CACHE_KEY);
+    if (data) {
+      const parsed = JSON.parse(data);
+      useNutritionStore.setState({
+        todayFoodLogs: parsed.todayFoodLogs || [],
+        calorieGoal: parsed.calorieGoal ?? 1800,
+        mealTypes: parsed.mealTypes || [],
+      });
+    }
+  } catch {}
+}

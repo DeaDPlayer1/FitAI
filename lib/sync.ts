@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import { useNutritionStore } from '@/store/nutritionStore';
 import { useUserStore } from '@/store/userStore';
 import { useWorkoutStore } from '@/store/workoutStore';
+import { syncRecoveryDays, syncExerciseProgress } from './memoryService';
 
 /**
  * Fetches all user data from Supabase and populates the local stores.
@@ -29,6 +30,8 @@ export async function syncUserData(userId: string) {
         onboarding_complete: !!profile.onboarding_complete,
         created_at: profile.updated_at || new Date().toISOString(),
         avatar_url: null,
+        app_mode: (profile.app_mode as any) ?? 'normal',
+        dark_mode: !!profile.dark_mode,
         health_profile: {
           age: profile.age ?? null,
           gender: null,
@@ -39,6 +42,15 @@ export async function syncUserData(userId: string) {
           weightUnit: 'kg',
           heightUnit: 'cm',
           targetWeight: null,
+          experience_level: (profile.experience_level as any) ?? null,
+          activity_level: (profile.activity_level as any) ?? null,
+          available_days: profile.available_days ?? null,
+          equipment: (profile.equipment as any) ?? null,
+          diet_type: (profile.diet_type as any) ?? null,
+          injuries: profile.injuries ?? null,
+          sleep_hours: profile.sleep_hours ?? null,
+          stress_level: (profile.stress_level as any) ?? null,
+          cardio_preference: (profile.cardio_preference as any) ?? null,
         },
         goals: {
           calories: profile.calorie_goal ?? 1800,
@@ -118,6 +130,12 @@ export async function syncUserData(userId: string) {
     } else {
       useWorkoutStore.getState().setWorkoutLogs(workouts as any);
     }
+
+    // 5. Sync Memory Layer (recovery days + exercise progression)
+    await Promise.all([
+      syncRecoveryDays(userId, 14),
+      syncExerciseProgress(userId, 90),
+    ]);
 
     if (__DEV__) console.log('Sync complete for user:', userId);
   } catch (error) {

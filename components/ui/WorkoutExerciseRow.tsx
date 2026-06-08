@@ -50,7 +50,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: theme.spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    borderBottomColor: theme.colors.border.solid,
     backgroundColor: 'transparent',
   },
   dotContainer: {

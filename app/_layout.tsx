@@ -15,23 +15,60 @@ import {
   Inter_700Bold 
 } from '@expo-google-fonts/inter';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserProfile, defaultHealthProfile } from '@/lib/auth';
+import { clearStoredSession, ensureFreshToken, startPeriodicTokenRefresh, stopPeriodicTokenRefresh } from '@/lib/tokenManager';
+import { hydrateCoachChat } from '@/store/workoutStore';
+import { hydrateMemoryCache } from '@/store/memoryStore';
+import { hydrateNutritionCache } from '@/store/nutritionStore';
 import { useUserStore } from '@/store/userStore';
+import { useModeStore } from '@/store/modeStore';
+import { useTabBarStore } from '@/store/tabBarStore';
 import { syncUserData } from '@/lib/sync';
 import { useNutritionStore } from '@/store/nutritionStore';
 import { useWorkoutStore } from '@/store/workoutStore';
 import { useSplitBuilderStore } from '@/store/splitBuilderStore';
+import { useMemoryStore } from '@/store/memoryStore';
+import { useAiTrainerStore } from '@/store/aiTrainerStore';
+import { useProfileStore } from '@/store/profileStore';
+import { useDashboardStore } from '@/store/dashboardStore';
+import { useLiveContextStore } from '@/store/liveContextStore';
+import { useOnboardingStore } from '@/store/onboardingStore';
 import { COLORS } from '@/constants/theme';
 import { initSentry, setSentryUser, clearSentryUser } from '@/lib/sentry';
 import { trackEvent, identifyUser, resetAnalytics, trackScreenView } from '@/lib/analytics';
 import { ErrorBoundary } from '@/utils/errorBoundary'; // PREFLIGHT FIX: wrap navigation with ErrorBoundary
 import { ToastProvider } from '@/components/ui/ToastNotification';
+import { ThemeProvider, useTheme } from '@/components/ThemeProvider';
 import { setNetworkStatus } from '@/lib/network';
 import { logger } from '@/lib/logger';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync().catch(() => {/* ignore */});
+
+// Silently suppress known unhandled promise rejections from transitive deps
+// (e.g. expo-keep-awake native module, Supabase stale refresh tokens)
+const SILENCED_ERROR_PATTERNS = [
+  'Unable to activate keep awake',
+  'Invalid Refresh Token: Refresh Token Not Found',
+];
+try {
+  const ErrorUtils = (globalThis as any).ErrorUtils;
+  if (ErrorUtils?.setGlobalHandler) {
+    const origHandler = ErrorUtils.getGlobalHandler();
+    ErrorUtils.setGlobalHandler((error: any, isFatal: boolean) => {
+      const msg = error?.message || error?.toString?.() || '';
+      if (!isFatal && SILENCED_ERROR_PATTERNS.some((p) => msg.includes(p))) {
+        if (__DEV__) console.warn('[silenced]', msg);
+        return;
+      }
+      origHandler(error, isFatal);
+    });
+  }
+} catch (_e) {
+  // Guard against older RN versions without ErrorUtils
+}
 
 // Suppress deprecation warnings for packages not yet migrated
 LogBox.ignoreLogs([
@@ -42,6 +79,10 @@ export const unstable_settings = {
   initialRouteName: '(auth)',
 };
 
+// Flag set in AsyncStorage after first account creation.
+// On subsequent cold starts with no session, user goes to login instead of onboarding.
+const HAS_ACCOUNT_KEY = '@has_account';
+
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
@@ -49,6 +90,7 @@ export default function RootLayout() {
   const { user, isLoading, isAuthenticated, setUser, clearUser, setLoading } =
     useUserStore();
   const [booting, setBooting] = useState(true);
+  const [hasAccount, setHasAccount] = useState(false);
 
   // Load Fonts
   const [fontsLoaded, fontError] = useFonts({
@@ -58,6 +100,10 @@ export default function RootLayout() {
     Inter_700Bold,
   });
 
+  // Track whether initial auth bootstrap has finished
+  const _authInitialized = useRef(false);
+  const _authRetryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Listen to Supabase auth state changes
   useEffect(() => {
     logger.init();
@@ -66,17 +112,31 @@ export default function RootLayout() {
     const clearLocalStores = () => {
       useNutritionStore.getState().clearToday();
       useWorkoutStore.getState().clearChat();
-      useWorkoutStore.getState().clearActiveWorkout();
-      useWorkoutStore.getState().clearWorkoutLogs(); // FIX[1]: clear local workout logs on logout
+      useWorkoutStore.getState().clearWorkoutLogs();
       useSplitBuilderStore.getState().reset();
+      useMemoryStore.getState().clearAll();
+      useAiTrainerStore.getState().clearAll();
+      useProfileStore.getState().reset();
+      useDashboardStore.getState().reset();
+      useLiveContextStore.getState().reset();
+      useOnboardingStore.getState().reset();
     };
 
-    // FIX: Define before first use (was referenced before initialization).
     const handleAuthChange = async (session: any, retryCount = 0) => {
+      if (_authRetryTimeout.current) {
+        clearTimeout(_authRetryTimeout.current);
+        _authRetryTimeout.current = null;
+      }
       if (session?.user) {
         try {
           const profile = await getCurrentUserProfile(session.user.id);
           setUser({ ...profile, email: session.user.email || profile.email });
+          if (profile && 'app_mode' in profile) {
+            useModeStore.getState().setMode(profile.app_mode || 'normal');
+          } else {
+            console.warn('[auth] app_mode column missing from profiles table — run migration 20260530_app_mode.sql');
+            useModeStore.getState().setMode('normal');
+          }
           setSentryUser(session.user.id, session.user.email);
           identifyUser(session.user.id, { name: profile?.name || 'User' });
           trackEvent('user_logged_in');
@@ -85,36 +145,19 @@ export default function RootLayout() {
           console.warn(`[auth] Profile fetch failed (attempt ${retryCount + 1}):`, err);
           
           if (retryCount < 1) {
-            // Wait 2 seconds and retry once before falling back
-            setTimeout(() => handleAuthChange(session, retryCount + 1), 2000);
+            _authRetryTimeout.current = setTimeout(() => handleAuthChange(session, retryCount + 1), 2000);
             return;
           }
 
-          // Fallback: If fetch fails multiple times, try to create the row but DO NOT set onboarding_complete false yet
-          try {
-            await supabase.from('profiles').upsert({
-              id: session.user.id,
-              full_name: session.user.user_metadata?.name || 'User',
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'id', ignoreDuplicates: true });
-            
-            // Try fetching one last time after upsert
-            const retryProfile = await getCurrentUserProfile(session.user.id);
-            setUser({ ...retryProfile, email: session.user.email || retryProfile.email });
-            syncUserData(session.user.id).catch(err => console.error('[sync] Sync failed:', err));
-            return;
-          } catch (e) {
-            console.error('[auth] Final fallback failed:', e);
-          }
-
-          // Last resort: Only now set defaults if we absolutely can't get data
           setUser({
             id: session.user.id,
             name: session.user.user_metadata?.name || 'User',
             email: session.user.email || '',
             avatar_url: null,
             created_at: new Date().toISOString(),
-            onboarding_complete: false, // This is the final fallback for truly new users
+            onboarding_complete: false,
+            app_mode: 'normal',
+            dark_mode: false,
             health_profile: defaultHealthProfile,
             goals: {
               calories: 1800,
@@ -135,15 +178,17 @@ export default function RootLayout() {
       }
     };
 
-    // SAFETY FALLBACK: If checkSession hangs for any reason, force booting to false after 15s.
+    // SAFETY FALLBACK: If checkSession hangs, force booting to false after 20s.
     const safetyTimeout = setTimeout(() => {
       console.warn('[auth-bootstrap] Safety timeout reached. Forcing boot.');
-      setBooting(false);
       setLoading(false);
-    }, 15000);
+      setBooting(false);
+      _authInitialized.current = true;
+    }, 20000);
 
-    // Initial check — with a hard 8-second timeout so a bad network / wrong
-    // Supabase key never leaves the app stuck on the loading screen.
+    // Two-phase boot:
+    //   Phase 1 — Read session from local storage (fast, no network).
+    //   Phase 2 — In background, check TTL and refresh if needed.
     const checkSession = async () => {
       try {
         setLoading(true);
@@ -152,20 +197,31 @@ export default function RootLayout() {
         initSentry();
         trackEvent('app_launched');
 
-        // Race Supabase against a timeout so we never hang forever on mobile
-        const sessionResult = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<{ data: { session: null } }>((resolve) =>
-            setTimeout(() => {
-              // Silently resolve with no session after 12s on slow networks
-              resolve({ data: { session: null } });
-            }, 12000)
-          ),
+        // Hydrate persisted stores
+        await Promise.all([
+          hydrateMemoryCache(),
+          hydrateCoachChat(),
+          hydrateNutritionCache(),
         ]);
 
-        await handleAuthChange(sessionResult.data.session);
+        try {
+          const flag = await AsyncStorage.getItem(HAS_ACCOUNT_KEY);
+          if (flag === 'true') setHasAccount(true);
+        } catch {}
+
+        const { data: localSession } = await supabase.auth.getSession();
+
+        if (localSession?.session) {
+          // Phase 1: Immediately hydrate UI with local session
+          // Phase 2 (background): Verify token freshness before first render completes
+          const freshSession = await ensureFreshToken().catch(() => null);
+          const sessionToUse = freshSession ? await supabase.auth.getSession().then(r => r.data.session).catch(() => localSession.session) : localSession.session;
+          await handleAuthChange(sessionToUse || localSession.session);
+        } else {
+          clearLocalStores();
+          clearUser();
+        }
       } catch (err) {
-        // Never block app startup on a session check failure
         console.error('[auth-bootstrap] checkSession error:', err);
         clearLocalStores();
         clearUser();
@@ -173,36 +229,45 @@ export default function RootLayout() {
         clearTimeout(safetyTimeout);
         setLoading(false);
         setBooting(false);
+        _authInitialized.current = true;
       }
     };
 
     checkSession();
 
-    // Track last handled session to avoid redundant calls (race with login.tsx)
-    let lastSessionUserId: string | null = null;
+    startPeriodicTokenRefresh();
 
+    // RULE: The onAuthStateChange listener ONLY updates state.
+    // Navigation is handled SOLELY by the route guard useEffect below.
+    // This eliminates the race condition between listener navigation
+    // and route guard navigation that caused the login freeze.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        // Prevent duplicate handling when login.tsx already called setUser
-        if (session?.user?.id && session.user.id === lastSessionUserId) {
-          return;
-        }
+        try {
+          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            await handleAuthChange(session);
+            return;
+          }
 
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          if (session?.user) lastSessionUserId = session.user.id;
-          await handleAuthChange(session);
-          return;
-        }
+          if (event === 'SIGNED_OUT') {
+            stopPeriodicTokenRefresh();
+            clearLocalStores();
+            clearUser();
+            return;
+          }
 
-        if (event === 'SIGNED_OUT') {
-          lastSessionUserId = null;
-          clearLocalStores();
-          clearUser();
-          return;
+          if (session?.user) await handleAuthChange(session);
+        } catch (err: any) {
+          const msg = err?.message || err?.toString?.() || '';
+          if (msg.includes('Invalid Refresh Token')) {
+            console.warn('[auth-subscription] Stale refresh token. Clearing.');
+            await clearStoredSession();
+            clearLocalStores();
+            clearUser();
+          } else {
+            console.error('[auth-subscription] Error:', err);
+          }
         }
-
-        if (session?.user) lastSessionUserId = session.user.id;
-        await handleAuthChange(session);
       }
     );
 
@@ -214,37 +279,68 @@ export default function RootLayout() {
     });
 
     return () => {
+      stopPeriodicTokenRefresh();
       subscription.unsubscribe();
       clearTimeout(safetyTimeout);
       appStateSub.remove();
     };
   }, []);
 
-  // Route protection
+  // ── Route protection (SINGLE SOURCE OF TRUTH for navigation) ──
+  // RULE: All post-auth navigation is driven by reactive auth state, NOT button callbacks.
+  // The onAuthStateChange listener ONLY updates state; this Effect navigates.
   useEffect(() => {
-    // Wait until store is not loading, boot is finished, AND navigation is stable
-    if (isLoading || booting || !navigationState?.key) return;
+    // Must wait for fonts + initial session check
+    if (isLoading || booting) return;
 
-    const rootSegment = segments[0];
+    const rootSegment = segments?.[0] || '';
     const inAuthGroup = rootSegment === '(auth)';
     const inOnboarding = rootSegment === 'onboarding';
-    const inTabs = rootSegment === '(tabs)';
+    const inTabs = rootSegment === '(tabs)' || rootSegment === '(ai-trainer)';
+    const inPublicRoutes = ['splash', 'boot', 'coach', 'workout', 'checkin', 'plan', 'nutrition', 'settings'].includes(rootSegment);
+    const navigatorReady = !!navigationState?.key || segments.length > 0;
 
-    if (!isAuthenticated) {
-      // Allow staying on the welcome screen (index)
-      if (!inAuthGroup && segments.length > 0) {
-        router.replace('/(auth)/login');
+    // If no auth state is settled yet, wait
+    if (!isAuthenticated && !user) {
+      // Navigator must be ready to show login
+      if (!navigatorReady) return;
+      if (!inAuthGroup && !inOnboarding && !inPublicRoutes) {
+        router.replace(hasAccount ? '/(auth)/login' : '/onboarding/welcome');
       }
-    } else if (user && !user.onboarding_complete) {
-      if (!inOnboarding) {
-        router.replace('/onboarding/step1-personal');
+      return;
+    }
+
+    if (user && !user.onboarding_complete) {
+      if (!inOnboarding && !inPublicRoutes && navigatorReady) {
+        router.replace('/onboarding/welcome');
       }
-    } else if (isAuthenticated && user?.onboarding_complete) {
-      if (inAuthGroup || inOnboarding || (!inTabs && (segments as string[]).length === 0)) {
-        router.replace('/(tabs)');
+      return;
+    }
+
+    if (isAuthenticated && user?.onboarding_complete) {
+      const mode = user.app_mode || 'normal';
+      const targetGroup: any = mode === 'ai_trainer' ? '/(ai-trainer)' : '/(tabs)';
+      // Already on the correct group — no-op
+      if (inTabs && rootSegment === (mode === 'ai_trainer' ? '(ai-trainer)' : '(tabs)')) {
+        return;
+      }
+      // Don't redirect when on a root-level detail screen (workout/builder, modals, coach, etc.)
+      if (!inAuthGroup && !inOnboarding && !inTabs) {
+        return;
+      }
+      // Navigate to the correct group
+      if (navigatorReady || inAuthGroup || inOnboarding || (segments as string[]).length === 0) {
+        router.replace(targetGroup);
       }
     }
-  }, [isAuthenticated, isLoading, booting, user?.onboarding_complete, segments, navigationState?.key]);
+  }, [isAuthenticated, isLoading, booting, user?.onboarding_complete, user?.app_mode, segments, navigationState?.key, hasAccount]);
+
+  // ── Tab bar visibility based on current route ──
+  useEffect(() => {
+    const rootSegment = segments?.[0] ?? '';
+    const inTabs = rootSegment === '(tabs)' || rootSegment === '(ai-trainer)';
+    useTabBarStore.getState().setVisible(inTabs);
+  }, [segments]);
 
   // Pulsing animation for loading screen
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
@@ -296,56 +392,119 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ToastProvider>
-        <ErrorBoundary fallbackMessage="This screen encountered an error">
-          {/* PREFLIGHT FIX: Contain runtime errors at the routing root */}
-          <Stack screenOptions={{ 
-            headerShown: false,
-            animation: 'slide_from_right',
-            gestureEnabled: true,
-            fullScreenGestureEnabled: true
-          }}>
-            <Stack.Screen name="index" options={{ animation: 'fade' }} />
-            <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
-            <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
-            <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
-            <Stack.Screen
-              name="modals/action-modal"
-              options={{ presentation: 'transparentModal', animation: 'fade' }}
-            />
-            <Stack.Screen
-              name="modals/log-workout"
-              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-            />
-            <Stack.Screen
-              name="modals/log-food"
-              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-            />
-            <Stack.Screen
-              name="modals/log-weight"
-              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-            />
-            <Stack.Screen
-              name="modals/active-workout"
-              options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
-            />
-            <Stack.Screen
-              name="modals/exercise-selector"
-              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-            />
-            <Stack.Screen
-              name="workout/builder"
-              options={{ animation: 'slide_from_right' }}
-            />
-            <Stack.Screen
-              name="workout/summary"
-              options={{ animation: 'fade' }}
-            />
-          </Stack>
-        </ErrorBoundary>
-      </ToastProvider>
-      <StatusBar style="light" />
+      <ThemeProvider>
+        <ToastProvider>
+          <ErrorBoundary fallbackMessage="This screen encountered an error">
+            <AppNavigator />
+          </ErrorBoundary>
+        </ToastProvider>
+        <StatusBar style={user?.dark_mode ? 'light' : 'dark'} />
+      </ThemeProvider>
     </GestureHandlerRootView>
+  );
+}
+
+function AppNavigator() {
+  const theme = useTheme();
+  return (
+    <Stack screenOptions={{
+      headerShown: false,
+      animation: 'slide_from_right',
+      gestureEnabled: true,
+      fullScreenGestureEnabled: true,
+      contentStyle: { backgroundColor: theme.colors.bg.primary },
+    }}>
+      <Stack.Screen name="index" options={{ animation: 'fade' }} />
+      <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
+      <Stack.Screen name="(auth)/reset-password" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
+      <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
+      <Stack.Screen name="(ai-trainer)" options={{ animation: 'fade' }} />
+      <Stack.Screen
+        name="splash"
+        options={{ animation: 'fade', fullScreenGestureEnabled: false }}
+      />
+      <Stack.Screen
+        name="boot"
+        options={{ animation: 'fade', fullScreenGestureEnabled: false }}
+      />
+      <Stack.Screen
+        name="plan/reveal"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="plan/reset"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="coach/chat"
+        options={{ animation: 'slide_from_right' }}
+      />
+      <Stack.Screen
+        name="workout/session"
+        options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="checkin/weekly"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="nutrition/log"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="settings/mode-switcher"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/action-modal"
+        options={{ presentation: 'transparentModal', animation: 'fade' }}
+      />
+      <Stack.Screen
+        name="modals/log-workout"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/log-food"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/log-weight"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/active-workout"
+        options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/exercise-selector"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="workout/builder"
+        options={{ animation: 'slide_from_right' }}
+      />
+      <Stack.Screen
+        name="workout/summary"
+        options={{ animation: 'fade' }}
+      />
+      <Stack.Screen
+        name="modals/confirm-plan"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/weekly-review"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/edit-settings"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+      <Stack.Screen
+        name="modals/add-meal-type"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+    </Stack>
   );
 }
 

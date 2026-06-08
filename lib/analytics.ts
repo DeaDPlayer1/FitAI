@@ -42,8 +42,8 @@ async function getPostHog() {
   if (posthogClient) return posthogClient;
 
   try {
+    // @ts-expect-error - posthog-react-native module may not be installed
     const { PostHog } = await import('posthog-react-native');
-    // @ts-expect-error - environment may not be in PostHogOptions type
     posthogClient = new PostHog(POSTHOG_KEY, {
       host: POSTHOG_HOST,
     });

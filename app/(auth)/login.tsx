@@ -21,15 +21,28 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { signInUser } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
-import { useUserStore } from '@/store/userStore';
 import { theme } from '@/constants/theme';
 import * as Haptics from 'expo-haptics';
 
 const { width, height } = Dimensions.get('window');
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(key: string, maxAttempts = 5, windowMs = 30000): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= maxAttempts) return false;
+  entry.count++;
+  return true;
+}
+
 export default function LoginScreen() {
   const router = useRouter();
-  const { setUser } = useUserStore();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -86,20 +99,34 @@ export default function LoginScreen() {
       setError('Please fill in all fields.');
       return;
     }
+    const trimmedEmail = email.trim();
+    if (!EMAIL_RE.test(trimmedEmail)) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (!checkRateLimit(trimmedEmail)) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setError('Too many attempts. Please wait 30 seconds.');
+      return;
+    }
     setError('');
     setLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      const profile = await signInUser(email.trim(), password);
+      // Timeout the Supabase call so loading never hangs forever
+      await Promise.race([
+        signInUser(trimmedEmail, password),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Request timed out. Check your connection.')), 15000)
+        ),
+      ]);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setUser(profile);
-      // Navigate immediately — don't wait for route guard to avoid race conditions
-      if (profile.onboarding_complete) {
-        router.replace('/(tabs)');
-      } else {
-        router.replace('/onboarding/step1-personal');
-      }
+      // RULE: Don't call setUser or navigate here — the onAuthStateChange
+      // listener in _layout.tsx handles state updates, and the route guard
+      // handles navigation. This prevents race conditions between the
+      // login screen and the auth system.
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       const msg = err.message || 'Login failed.';
@@ -325,15 +352,15 @@ export default function LoginScreen() {
                   </View>
 
                   {/* Signup Route */}
-                  <TouchableOpacity 
-                    activeOpacity={0.7}
-                    onPress={() => router.push('/(auth)/signup')}
-                    style={styles.signUpLink}
-                  >
-                    <Text style={styles.signUpText}>
-                      Don't have an account? <Text style={styles.signUpTextHighlight}>Sign Up</Text>
-                    </Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity 
+                      activeOpacity={0.7}
+                      onPress={() => router.push('/onboarding/welcome')}
+                      style={styles.signUpLink}
+                    >
+                      <Text style={styles.signUpText}>
+                        Don't have an account? <Text style={styles.signUpTextHighlight}>Sign Up</Text>
+                      </Text>
+                    </TouchableOpacity>
                 </View>
               </ScrollView>
             </Animated.View>

@@ -1,6 +1,6 @@
 // UI: Premium Statistics/Activity Overhaul (Phase 5)
 // DATA: Fixed zero-data issue by implementing real-time Supabase fetching logic
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Dimensions, TouchableOpacity, StatusBar, ActivityIndicator } from 'react-native';
 import Animated, { useSharedValue, useAnimatedScrollHandler, useAnimatedStyle, interpolate, Extrapolate } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +16,9 @@ import { CountingText } from '@/components/ui/CountingText';
 
 import { supabase } from '@/lib/supabase';
 import { theme } from '@/constants/theme';
+import { useLiveContextStore } from '@/store/liveContextStore';
+import { generateInsights } from '@/lib/liveInsightsEngine';
+import AIInsightCard from '@/components/ui/AIInsightCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -58,18 +61,26 @@ export default function StatsScreen() {
       
       if (error) throw error;
 
-      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      const grouped = data.reduce((acc: any, log: any) => {
-        const dayName = days[new Date(log.logged_at).getDay()];
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + mondayOffset);
+      monday.setHours(0, 0, 0, 0);
+
+      const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      const grouped = data.reduce((acc: Record<string, number>, log: any) => {
+        const logDate = new Date(log.logged_at);
+        const dayIndex = logDate.getDay();
+        const dayName = days[(dayIndex + 6) % 7];
         acc[dayName] = (acc[dayName] || 0) + (log.calories || 0);
         return acc;
       }, {});
 
-      const today = days[new Date().getDay()];
       const chart = days.map(d => ({
         day: d,
-        value: grouped[d] || 0,
-        isActive: d === today
+        value: grouped[d] ?? 0,
+        isActive: d === days[(now.getDay() + 6) % 7],
       }));
       setWeeklyCalories(chart);
     } catch (e) { console.error('fetchWeeklyCalories error:', e); }
@@ -80,9 +91,9 @@ export default function StatsScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const today = new Date();
-      const startOfDay = new Date(today.setHours(0,0,0,0)).toISOString();
-      const endOfDay = new Date(today.setHours(23,59,59,999)).toISOString();
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).toISOString();
 
       // Exercise (from workout_logs)
       const { data: workouts } = await supabase.from('workout_logs').select('duration_minutes').eq('user_id', user.id).gte('logged_at', startOfDay).lte('logged_at', endOfDay);
@@ -125,9 +136,9 @@ export default function StatsScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const today = new Date();
-      const startOfDay = new Date(today.setHours(0,0,0,0)).toISOString();
-      const endOfDay = new Date(today.setHours(23,59,59,999)).toISOString();
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).toISOString();
 
       const { data } = await supabase.from('meal_logs').select('calories, protein_g, carbs_g, fat_g').eq('user_id', user.id).gte('logged_at', startOfDay).lte('logged_at', endOfDay);
       const totals = data?.reduce((acc, m) => ({
@@ -179,6 +190,47 @@ export default function StatsScreen() {
   );
 
   const calorieGoal = profile?.calorie_goal ?? 1800;
+  const statsInsights = useLiveContextStore((s) => s.insights);
+  const setStatsProgressContext = useLiveContextStore((s) => s.setProgressContext);
+
+  useEffect(() => {
+    if (loading) return;
+    const weightNum = typeof latestWeight === 'number' ? latestWeight : null;
+    const input = {
+      calories: macros.calories,
+      calorieGoal,
+      protein: macros.protein,
+      proteinGoal: profile?.protein_goal_g ?? 150,
+      carbs: macros.carbs,
+      carbsGoal: profile?.carbs_goal_g ?? 200,
+      fat: macros.fat,
+      fatGoal: profile?.fat_goal_g ?? 60,
+      water: todayWater,
+      waterGoal: 8,
+      steps: 0,
+      stepsGoal: 10000,
+      streakDays: 0,
+      mealsLogged: macros.calories > 0 ? 3 : 0,
+      todayExerciseMin: todayExercise,
+      latestWeight: weightNum,
+      previousWeight: null,
+      sleepHours: null,
+      previousSleep: null,
+      adherenceTrend: null,
+      completedWorkoutsThisWeek: 0,
+      plannedWorkoutsThisWeek: 0,
+      weeklyWorkoutsLastWeek: 0,
+      readinessScore: 7,
+      fatigueLevel: 3,
+      stressLevel: null,
+      motivationLevel: null,
+    };
+    const cards = generateInsights(input);
+    const weightCard = cards.find(c => c.type === 'weight');
+    if (weightCard) {
+      setStatsProgressContext(weightCard.body);
+    }
+  }, [loading, macros, calorieGoal, todayExercise, latestWeight, todayWater, profile]);
 
   // ANIMATION: Sticky Header Collapse
   const scrollY = useSharedValue(0);
@@ -230,8 +282,20 @@ export default function StatsScreen() {
               <View style={styles.flex} />
               <Text style={styles.heroTarget}>Target: {calorieGoal} Kcal</Text>
             </View>
+            {(() => {
+              const diff = macros.calories - calorieGoal;
+              const pct = calorieGoal > 0 ? Math.round((macros.calories / calorieGoal) * 100) : 0;
+              if (macros.calories === 0) return null;
+              if (diff > 100) return <Text style={styles.heroInsight}>Above target today. Protein stayed {macros.protein >= (profile?.protein_goal_g ?? 150) * 0.8 ? 'solid' : 'a bit low'} — overall impact depends on consistency.</Text>;
+              if (diff < -100) return <Text style={styles.heroInsight}>Below target at {pct}% — if energy is fine, this is controlled. If fatigue is setting in, consider adding a snack.</Text>;
+              return <Text style={styles.heroInsight}>Close to target ({pct}%) — good adherence today.</Text>;
+            })()}
           </View>
         </FadeInView>
+
+        {statsInsights.filter(c => c.type === 'weight' || c.type === 'fatigue' || c.type === 'recovery').slice(0, 2).map((card, i) => (
+          <AIInsightCard key={card.id} card={card} index={i} />
+        ))}
 
         {/* BAR CHART - Staggered */}
         <FadeInView delay={100}>
@@ -385,6 +449,7 @@ const styles = StyleSheet.create({
   heroValue: { fontSize: 48, fontWeight: '900', color: '#1A1A1A' },
   heroUnit: { fontSize: 18, color: theme.colors.text.muted },
   heroTarget: { fontSize: 13, color: theme.colors.text.muted },
+  heroInsight: { fontSize: 13, color: theme.colors.text.muted, lineHeight: 19, marginTop: 8, fontStyle: 'italic' },
   chartCard: { marginBottom: 16, minHeight: 200, justifyContent: 'center' },
   grid: { marginBottom: 24, gap: 12 },
   gridRow: { flexDirection: 'row', gap: 12 },

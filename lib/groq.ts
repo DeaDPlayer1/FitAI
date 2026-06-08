@@ -2,15 +2,70 @@
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
 
+// ── Inline Rate Limiter ──
+let requestTimestamps: number[] = [];
+const MAX_REQUESTS_PER_MINUTE = 30;
+
+function checkRateLimit(): { allowed: boolean; reason?: string } {
+  const now = Date.now();
+  requestTimestamps = requestTimestamps.filter(t => now - t < 60000);
+  if (requestTimestamps.length >= MAX_REQUESTS_PER_MINUTE) {
+    return { allowed: false, reason: 'Rate limit reached. Please wait before sending another message.' };
+  }
+  return { allowed: true };
+}
+
+function recordRequest(): void {
+  requestTimestamps.push(Date.now());
+}
+
 export type GroqModel =
   | 'llama-3.3-70b-versatile'
   | 'llama-3.1-8b-instant'
   | 'mixtral-8x7b-32768'
-  | 'meta-llama/llama-4-scout-17b-16e-instruct';
+  | 'meta-llama/llama-4-scout-17b-16e-instruct'
+  | 'llama-4-scout-17b-16e-instruct';
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+}
+
+// ── Circuit Breaker ──
+type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
+let circuitState: CircuitState = 'CLOSED';
+let consecutiveFailures = 0;
+let lastFailureTime = 0;
+const COOLDOWN_MS = 60000;
+const CONSECUTIVE_THRESHOLD = 3;
+
+function getCircuitState(): CircuitState {
+  if (circuitState === 'OPEN' && Date.now() - lastFailureTime > COOLDOWN_MS) {
+    circuitState = 'HALF_OPEN';
+  }
+  return circuitState;
+}
+
+function recordSuccess(): void {
+  circuitState = 'CLOSED';
+  consecutiveFailures = 0;
+}
+
+function recordFailure(): void {
+  consecutiveFailures++;
+  lastFailureTime = Date.now();
+  if (consecutiveFailures >= CONSECUTIVE_THRESHOLD) {
+    circuitState = 'OPEN';
+    console.warn(`[groq-circuit] Circuit OPEN after ${consecutiveFailures} consecutive failures. Cooldown: ${COOLDOWN_MS}ms`);
+  } else if (circuitState === 'HALF_OPEN') {
+    circuitState = 'OPEN';
+    lastFailureTime = Date.now();
+  }
+}
+
+function isCircuitOpen(): boolean {
+  return getCircuitState() === 'OPEN';
 }
 
 /**
@@ -25,18 +80,25 @@ export async function groqChatRaw(
     throw new Error('Missing EXPO_PUBLIC_GROQ_API_KEY. Add it to .env and restart Expo.');
   }
 
+  const rateCheck = checkRateLimit();
+  if (!rateCheck.allowed) {
+    throw new Error(rateCheck.reason || 'Rate limit reached. Please wait before sending another message.');
+  }
+
+  if (isCircuitOpen()) {
+    throw new Error('AI Service Unavailable: The service is temporarily unavailable due to repeated failures. Please try again in a few minutes.');
+  }
+
   const sanitizedMessages = messages.map(msg => {
-    if (msg.role === 'system' && typeof msg.content !== 'string') {
-      if (Array.isArray(msg.content)) {
-        const textContent = msg.content
-          .filter((part: any) => part.type === 'text')
-          .map((part: any) => part.text)
-          .join(' ');
-        return { ...msg, content: textContent };
-      }
-      return { ...msg, content: String(msg.content) };
+    if (msg.role === 'system' && Array.isArray(msg.content)) {
+      const textContent = msg.content
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text || '')
+        .join(' ');
+      return { ...msg, content: textContent };
     }
-    return msg;
+    if (typeof msg.content === 'string') return msg;
+    return { ...msg, content: String(msg.content) };
   });
 
   let lastError: Error | null = null;
@@ -87,16 +149,26 @@ export async function groqChatRaw(
         throw new Error('Groq API returned an empty or malformed response.');
       }
 
-      return data.choices[0].message.content;
+      const content = data.choices[0].message.content;
+      const maxChars = maxTokens * 4;
+      if (content.length > maxChars) {
+        console.warn(`[groq] Response truncated: ${content.length} chars (max ${maxChars})`);
+        return content.slice(0, maxChars);
+      }
+      recordSuccess();
+      recordRequest();
+      return content;
     } catch (error: any) {
       if (error.message?.includes('Groq API error') && attempt < maxRetries) {
         lastError = error;
         continue;
       }
+      recordFailure();
       throw error;
     }
   }
 
+  recordFailure();
   throw lastError || new Error('AI Service Error: Max retries exceeded');
 }
 
@@ -126,7 +198,12 @@ export function parseGroqJSON<T>(raw: string): T {
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
   }
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch (error) {
+    console.error('[groq] parseGroqJSON: malformed JSON response', error);
+    throw new Error('Groq returned malformed JSON. Please try again.');
+  }
 }
 
 /**

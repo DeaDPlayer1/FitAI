@@ -1,17 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
+import { supabase } from '@/lib/supabase';
 import { WeeklyPlan } from '@/lib/aiTrainer';
-
-export interface ExerciseSet {
-  weight: number;
-  reps: number;
-  done: boolean;
-}
-
-export interface ExerciseLog {
-  name: string;
-  sets: ExerciseSet[];
-}
 
 export type WorkoutPlan = WeeklyPlan;
 
@@ -37,7 +27,6 @@ interface WorkoutState {
   isGenerating: boolean;
   selectedDay: number;
   coachChatHistory: ChatMessage[];
-  activeWorkout: ExerciseLog[];
   workoutLogs: WorkoutLogRow[];
 
   setPlan: (plan: WorkoutPlan) => void;
@@ -45,11 +34,10 @@ interface WorkoutState {
   setSelectedDay: (day: number) => void;
   addChatMessage: (msg: ChatMessage) => void;
   clearChat: () => void;
-  setActiveWorkout: (exercises: ExerciseLog[]) => void;
-  clearActiveWorkout: () => void;
   setWorkoutLogs: (logs: WorkoutLogRow[]) => void;
   addWorkoutLog: (log: WorkoutLogRow) => void;
   clearWorkoutLogs: () => void;
+  fetchWorkoutLogs: (userId: string) => Promise<void>;
 }
 
 export const useWorkoutStore = create<WorkoutState>((set) => ({
@@ -57,7 +45,6 @@ export const useWorkoutStore = create<WorkoutState>((set) => ({
   isGenerating: false,
   selectedDay: 0,
   coachChatHistory: [],
-  activeWorkout: [],
   workoutLogs: [],
 
   setPlan: (currentPlan) => set({ currentPlan }),
@@ -65,35 +52,52 @@ export const useWorkoutStore = create<WorkoutState>((set) => ({
   setSelectedDay: (selectedDay) => set({ selectedDay }),
   addChatMessage: (msg) =>
     set((state) => ({
-      coachChatHistory: [...state.coachChatHistory, msg],
+      coachChatHistory: [...state.coachChatHistory, msg].slice(-100),
     })),
   clearChat: () => {
     AsyncStorage.removeItem(COACH_CHAT_KEY).catch((e) => console.error('[workoutStore] clearChat AsyncStorage error:', e));
     set({ coachChatHistory: [] });
   },
-  setActiveWorkout: (activeWorkout) => set({ activeWorkout }),
-  clearActiveWorkout: () => set({ activeWorkout: [] }),
   setWorkoutLogs: (workoutLogs) => set({ workoutLogs }),
   addWorkoutLog: (log) =>
     set((state) => ({ workoutLogs: [log, ...state.workoutLogs] })),
   clearWorkoutLogs: () => set({ workoutLogs: [] }),
+  fetchWorkoutLogs: async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('workout_logs')
+        .select('*')
+        .eq('user_id', userId)
+        .order('logged_at', { ascending: false });
+      if (!error && data) {
+        set({ workoutLogs: data as WorkoutLogRow[] });
+      }
+    } catch (e) {
+      console.error('[workoutStore] fetchWorkoutLogs error:', e);
+    }
+  },
 }));
 
 const COACH_CHAT_KEY = '@pulse_ai_coach_chat';
 
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
 useWorkoutStore.subscribe((state, prev) => {
   if (state.coachChatHistory !== prev.coachChatHistory) {
-    AsyncStorage.setItem(COACH_CHAT_KEY, JSON.stringify(state.coachChatHistory)).catch((e) => console.error('[workoutStore] persist chat AsyncStorage error:', e));
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      AsyncStorage.setItem(COACH_CHAT_KEY, JSON.stringify(state.coachChatHistory)).catch((e) => console.error('[workoutStore] persist chat AsyncStorage error:', e));
+    }, 500);
   }
 });
 
-AsyncStorage.getItem(COACH_CHAT_KEY).then((data) => {
-  if (data) {
-    try {
+export async function hydrateCoachChat(): Promise<void> {
+  try {
+    const data = await AsyncStorage.getItem(COACH_CHAT_KEY);
+    if (data) {
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed) && parsed.length > 0) {
         useWorkoutStore.setState({ coachChatHistory: parsed });
       }
-    } catch {}
-  }
-});
+    }
+  } catch {}
+}

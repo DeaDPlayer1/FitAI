@@ -1,97 +1,170 @@
 /**
- * FitAI Design System - Premium Wellness (Lavender & Soft Minimal)
- * 
- * Inspired by modern wellness and productivity apps.
- * Scandinavian-inspired spacing, airy layouts, and calm luxury palette.
+ * FitAI Design System v3.0
+ * Soft Premium Fintech Aesthetic → Applied to Fitness
+ *
+ * Lavender gradients, breathing space, emotional intelligence.
+ * Floating cards on tinted backgrounds. Numbers as the star.
  */
 
 const palette = {
-  lavender: '#F5F3FF',
-  white: '#FFFFFF',
-  ghost: '#F9FAFB',
-  deepPurple: '#6D28D9',
-  softPurple: '#8B5CF6',
-  lavenderDark: '#C4B5FD',
-  pastelPink: '#FBCFE8',
-  pastelBlue: '#DBEAFE',
-  charcoal: '#1F2937',
-  slate: '#4B5563',
-  muted: '#9CA3AF',
-  disabled: '#D1D5DB',
-  success: '#10B981',
-  danger: '#EF4444',
+  // PRIMARY — Lavender/Purple brand
+  purple: '#6A49FA',
+  purpleDeep: '#453284',
+  purpleSoft: '#EDE9FE',
+  purpleGlow: 'rgba(106,73,250,0.15)',
+
+  // SECONDARY — Soft supportive colors
+  skyBlue: '#C6E6FF',
+  skyBlueSoft: '#EFF6FF',
+  softPink: '#FEDADA',
+  softPinkTint: '#FFF1F1',
+
+  // SEMANTIC
+  success: '#22C55E',
+  successSoft: '#DCFCE7',
   warning: '#F59E0B',
-  info: '#3B82F6',
+  warningSoft: '#FEF3C7',
+  danger: '#EF4444',
+  dangerSoft: '#FEE2E2',
+
+  // NEUTRALS
+  background: '#F6F5FB',
+  surface: '#FFFFFF',
+  surfaceTint: '#F0EFFE',
+  text: '#1B1B1F',
+  textSecondary: '#6E6E73',
+  textMuted: '#AEAEB2',
+  border: '#E8E8ED',
+
+  // Focus / Live mode
+  focus: '#1B1B1F',
+  focusElevated: '#2A2A2F',
 };
 
-// Define sub-objects first to avoid reference issues
 const colors = {
+  // Primary brand
+  primary: palette.purple,
+  primaryDeep: palette.purpleDeep,
+  primarySoft: palette.purpleSoft,
+  primaryGlow: palette.purpleGlow,
+
+  // Secondary palette
+  secondary: palette.skyBlue,
+  secondarySoft: palette.skyBlueSoft,
+
+  // Tertiary
+  tertiary: palette.softPink,
+  tertiarySoft: palette.softPinkTint,
+
+  // Semantic
+  success: palette.success,
+  successSoft: palette.successSoft,
+  warning: palette.warning,
+  warningSoft: palette.warningSoft,
+  danger: palette.danger,
+  dangerSoft: palette.dangerSoft,
+
+  // Backgrounds
   bg: {
-    primary: palette.lavender,
-    secondary: palette.white,
-    tertiary: palette.ghost,
-    elevated: palette.white,
-    sheet: palette.white,
-    overlay: 'rgba(0,0,0,0.4)',
-    card: palette.white,
+    primary: palette.background,
+    secondary: palette.surface,
+    tertiary: '#F9F8FD',
+    elevated: palette.surface,
+    card: palette.surface,
+    sheet: palette.surface,
+    overlay: 'rgba(0,0,0,0.40)',
+    focus: palette.focus,
+    focusElevated: palette.focusElevated,
+    input: palette.surfaceTint,
+    // Legacy tints
+    greenTint: palette.successSoft,
+    orangeTint: palette.warningSoft,
+    purpleTint: palette.purpleSoft,
+    blueTint: palette.skyBlueSoft,
   },
-  accent: {
-    primary: palette.softPurple,
-    secondary: palette.lavenderDark,
-    purple: palette.softPurple,
-    lavender: palette.lavenderDark,
-    brand: palette.deepPurple,
-    green: palette.success,
-    blue: palette.info,
-    red: palette.danger,
-    orange: palette.softPurple,
-  },
+
+  // Text
   text: {
-    primary: palette.charcoal,
-    secondary: palette.slate,
-    muted: palette.muted,
-    disabled: palette.disabled,
-    onAccent: palette.white,
-    onLight: palette.charcoal,
+    primary: palette.text,
+    secondary: palette.textSecondary,
+    muted: palette.textMuted,
+    disabled: '#D1D5DB',
+    onAccent: '#FFFFFF',
+    onLight: palette.text,
+    onFocus: '#FFFFFF',
+    onFocusMuted: 'rgba(255,255,255,0.65)',
   },
+
+  // Accent aliases (for compatibility with old components)
+  accent: {
+    primary: palette.purple,
+    secondary: palette.skyBlue,
+    purple: palette.purple,
+    lavender: palette.purpleSoft,
+    brand: palette.purpleDeep,
+    green: palette.success,
+    greenSoft: palette.successSoft,
+    blue: '#60A5FA',
+    blueSoft: palette.skyBlueSoft,
+    red: palette.danger,
+    redSoft: palette.dangerSoft,
+    orange: palette.warning,
+    orangeSoft: palette.warningSoft,
+    pink: '#FB7185',
+    pinkSoft: palette.softPinkTint,
+    purpleSoft: palette.purpleSoft,
+  },
+
+  // Borders (subtle, used sparingly)
   border: {
-    subtle: 'rgba(109, 40, 217, 0.05)',
-    soft: 'rgba(109, 40, 217, 0.08)',
-    medium: 'rgba(109, 40, 217, 0.12)',
-    strong: 'rgba(109, 40, 217, 0.20)',
+    subtle: 'rgba(106,73,250,0.05)',
+    soft: 'rgba(106,73,250,0.08)',
+    medium: 'rgba(106,73,250,0.12)',
+    strong: 'rgba(106,73,250,0.20)',
+    solid: palette.border,
   },
+
+  // Status (semantic)
   status: {
     success: palette.success,
     warning: palette.warning,
     danger: palette.danger,
-    info: palette.info,
+    info: '#3B82F6',
   },
+
+  // Gradients
   gradient: {
-    purple: [palette.softPurple, palette.deepPurple] as [string, string],
-    orange: [palette.softPurple, palette.deepPurple] as [string, string],
-    green: [palette.success, '#059669'] as [string, string],
-    lavender: [palette.lavender, '#E0D7FF'] as [string, string],
+    hero: [palette.purple, palette.purpleDeep] as [string, string],
+    heroSoft: [palette.purple, '#7C65FB'] as [string, string],
+    heroSkyBlue: [palette.skyBlue, '#A5D4FF'] as [string, string],
+    heroPink: [palette.softPink, '#FBBEBE'] as [string, string],
+    heroSuccess: [palette.success, '#16A34A'] as [string, string],
+    heroWarning: [palette.warning, '#F97316'] as [string, string],
+    cardGlow: ['rgba(106,73,250,0.12)', 'transparent'] as [string, string],
+    insightNutrition: ['#FFF8F0', '#FFF1E0'] as [string, string],
+    insightRecovery: ['#F0FDF4', '#DCFCE7'] as [string, string],
+    insightCoach: ['#F5F3FF', '#EDE9FE'] as [string, string],
+    insightMotivation: [palette.softPinkTint, '#FEDADA'] as [string, string],
   },
+
   // Top-level aliases
-  primary: palette.softPurple,
-  primaryDark: palette.deepPurple,
-  primaryLight: 'rgba(139, 92, 246, 0.1)',
-  success: palette.success,
-  warning: palette.warning,
-  danger: palette.danger,
-  info: palette.info,
+  purple: palette.purple,
+  purpleDeep: palette.purpleDeep,
+  purpleSoft: palette.purpleSoft,
+  skyBlue: palette.skyBlue,
+  softPink: palette.softPink,
+  background: palette.background,
+  surface: palette.surface,
+  surfaceTint: palette.surfaceTint,
+  textMuted: palette.textMuted,
+  textSecondary: palette.textSecondary,
+  info: '#3B82F6',
   green: palette.success,
-  blue: palette.info,
+  blue: '#60A5FA',
   red: palette.danger,
-  orange: palette.softPurple,
-  purple: palette.softPurple,
-  lavender: palette.lavenderDark,
-  // Legacy direct text aliases
-  textMuted: palette.muted,
-  textSecondary: palette.slate,
-  // Legacy bg aliases
-  background: palette.lavender,
-  surface: palette.white,
+  orange: '#F97316',
+  card: '#FFFFFF',
+  shadow: 'rgba(0,0,0,0.06)',
 };
 
 const spacing = {
@@ -99,44 +172,72 @@ const spacing = {
   xs: 4,
   sm: 8,
   md: 12,
-  lg: 16,
+  base: 16,
+  lg: 20,
   xl: 24,
   xxl: 32,
-  xxxl: 48,
-  huge: 64,
-  max: 80,
-  screenPadding: 24,
+  '2xl': 32,
+  '3xl': 40,
+  xxxl: 40,
+  huge: 48,
+  '4xl': 48,
+  '5xl': 64,
+  screenPadding: 20,
+  screenPaddingH: 20,
+  cardPadding: 20,
+  sectionGap: 24,
+  cardGap: 16,
 };
 
 const radius = {
   none: 0,
-  xs: 12,
-  sm: 16,
-  md: 20,
-  lg: 24,
-  xl: 32,
-  xxl: 40,
-  full: 999,
+  xs: 8,
+  sm: 12,
+  md: 16,
+  lg: 20,
+  xl: 24,
+  '2xl': 28,
+  '3xl': 32,
   pill: 999,
+  full: 999,
 };
 
 const font = {
   size: {
-    xs: 12,
-    sm: 14,
+    micro: 11,
+    caption: 13,
+    body: 16,
+    bodyMed: 16,
+    title: 18,
+    h3: 22,
+    h2: 26,
+    h1: 32,
+    display: 40,
+    // Legacy aliases for pre-v3 components
+    xs: 11,
+    sm: 13,
     md: 16,
     lg: 18,
-    xl: 20,
+    xl: 22,
     xxl: 26,
     xxxl: 32,
-    hero: 48,
-    mega: 64,
   },
   weight: {
     regular: '400' as const,
     medium: '500' as const,
     semibold: '600' as const,
     bold: '700' as const,
+    black: '800' as const,
+  },
+  lineHeight: {
+    micro: 16,
+    caption: 18,
+    body: 24,
+    title: 26,
+    h3: 30,
+    h2: 34,
+    h1: 40,
+    display: 48,
   },
   family: {
     heading: 'Inter_700Bold',
@@ -150,81 +251,117 @@ const font = {
 };
 
 const shadow = {
-  card: {
-    shadowColor: '#6D28D9',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.06,
-    shadowRadius: 24,
+  soft: {
+    shadowColor: palette.purple,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
     elevation: 4,
   },
-  soft: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
+  card: {
+    shadowColor: '#1B1B1F',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
     shadowRadius: 12,
-    elevation: 2,
+    elevation: 3,
   },
-  premium: {
-    shadowColor: '#6D28D9',
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.08,
-    shadowRadius: 40,
+  float: {
+    shadowColor: palette.purple,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.16,
+    shadowRadius: 24,
     elevation: 8,
   },
-  hero: {
-    shadowColor: '#6D28D9',
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.1,
-    shadowRadius: 30,
-    elevation: 10,
-  },
-  orange: {
-    shadowColor: '#6D28D9',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 15,
+  glow: {
+    shadowColor: palette.purple,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.30,
+    shadowRadius: 20,
     elevation: 6,
   },
-  green: {
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 15,
+  glowGreen: {
+    shadowColor: palette.success,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  glowWarning: {
+    shadowColor: palette.warning,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  glowDanger: {
+    shadowColor: palette.danger,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
     elevation: 6,
   },
   navbar: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  premium: {
+    shadowColor: '#1F2937',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.10,
+    shadowRadius: 32,
+    elevation: 10,
+  },
+  // Legacy shadow aliases (kept for backward compatibility with existing screens)
+  hero: {
+    shadowColor: palette.purple,
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.10,
+    shadowRadius: 30,
+    elevation: 10,
   },
   button: {
-    shadowColor: '#6D28D9',
+    shadowColor: palette.purple,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.12,
     shadowRadius: 14,
     elevation: 5,
   },
+  orange: {
+    shadowColor: palette.warning,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.20,
+    shadowRadius: 15,
+    elevation: 6,
+  },
+  green: {
+    shadowColor: palette.success,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.20,
+    shadowRadius: 15,
+    elevation: 6,
+  },
 };
 
 const card = {
-  padding: { hero: 28, medium: 22, compact: 16 },
-  radius: { hero: 32, standard: 26, compact: 20 },
+  padding: { hero: 24, medium: 20, compact: 16 },
+  radius: { hero: 32, standard: 24, compact: 20 },
   height: { hero: 220, metric: 120, meal: 115, compact: 80 },
 };
 
-// Legacy Compatibility objects
+// Legacy Compatibility objects (so existing components don't break)
 export const COLORS = {
-  primary: colors.accent.primary,
-  primaryDark: palette.deepPurple,
-  primaryLight: 'rgba(139, 92, 246, 0.1)',
-  success: colors.status.success,
-  successLight: 'rgba(16, 185, 129, 0.1)',
-  danger: colors.status.danger,
-  dangerLight: 'rgba(239, 68, 68, 0.1)',
-  warning: colors.status.warning,
-  warningLight: 'rgba(245, 158, 11, 0.1)',
+  primary: colors.primary,
+  primaryDark: colors.primaryDeep,
+  primaryLight: colors.primarySoft,
+  success: colors.success,
+  successLight: colors.successSoft,
+  danger: colors.danger,
+  dangerLight: colors.dangerSoft,
+  warning: colors.warning,
+  warningLight: colors.warningSoft,
   background: colors.bg.primary,
   bgPrimary: colors.bg.primary,
   bgSecondary: colors.bg.secondary,
@@ -234,23 +371,21 @@ export const COLORS = {
   text: colors.text.primary,
   textSecondary: colors.text.secondary,
   textMuted: colors.text.muted,
-  protein: palette.softPurple,
-  carbs: palette.lavenderDark,
-  fat: palette.pastelPink,
-  // Additional color aliases
-  purple: palette.softPurple,
-  orange: palette.softPurple,
-  green: palette.success,
-  blue: palette.info,
-  red: palette.danger,
-  // Production-critical missing aliases used by components
-  mint: palette.success,
+  protein: palette.success,
+  carbs: palette.warning,
+  fat: colors.primary,
+  purple: colors.primary,
+  orange: colors.warning,
+  green: colors.success,
+  blue: '#60A5FA',
+  red: colors.danger,
+  mint: colors.success,
   teal: '#14B8A6',
   bgCard: colors.bg.card,
   bgElevated: colors.bg.elevated,
   textPrimary: colors.text.primary,
   borderMid: colors.border.medium,
-  bgInput: colors.bg.elevated,
+  bgInput: colors.bg.input,
 };
 
 export const BACKGROUND = {
@@ -260,7 +395,7 @@ export const BACKGROUND = {
   elevated: colors.bg.elevated,
   border: colors.border.soft,
   cardBorder: colors.border.soft,
-  input: 'white',
+  input: colors.bg.input,
 };
 
 export const TEXT = {
@@ -272,37 +407,78 @@ export const TEXT = {
 
 export const SPACING = spacing;
 export const RADIUS = radius;
-export const FONT_SIZE = font.size;
+export const FONT_SIZE = {
+  micro: 11,
+  caption: 13,
+  body: 16,
+  bodyMed: 16,
+  title: 18,
+  h3: 22,
+  h2: 26,
+  h1: 32,
+  display: 40,
+  // Legacy aliases (pre-v3 components use these names)
+  xs: 11,
+  sm: 12,
+  md: 14,
+  lg: 16,
+  xl: 18,
+  xxl: 22,
+  xxxl: 32,
+  hero: 40,
+  mega: 64,
+};
 export const SHADOWS = shadow;
+
+// Animation presets (Reanimated 3)
+const animation = {
+  fast: 200,
+  standard: 350,
+  slow: 500,
+  spring: { damping: 18, stiffness: 140, mass: 1 },
+  springs: {
+    snappy: { damping: 14, stiffness: 180 },
+    smooth: { damping: 18, stiffness: 120 },
+    gentle: { damping: 22, stiffness: 90 },
+    bouncy: { damping: 10, stiffness: 200 },
+  },
+  stagger: 80,
+};
+
+const layout = {
+  navbarHeight: 88,
+  tabBarHeight: 64,
+  headerHeight: 160,
+  cardGap: 16,
+  sectionGap: 24,
+  screenPadding: 20,
+  heroHeight: 280,
+  heroShortHeight: 200,
+  overlapCardOffset: 32,
+};
 
 // MAIN THEME OBJECT
 export const theme = {
   colors,
+  palette,
   spacing,
   radius,
   font,
   shadow,
   card,
-  animation: {
-    fast: 200,
-    standard: 350,
-    slow: 500,
-    spring: { damping: 20, stiffness: 120, mass: 1 },
-  },
-  layout: {
-    navbarHeight: 88,
-    headerHeight: 140,
-    cardGap: 24,
-    sectionGap: 40,
-  },
-  // Legacy Proxies built into the object
+  animation,
+  layout,
+  // Legacy Proxies (uppercase variants)
   COLORS,
   BACKGROUND,
   TEXT,
   SPACING,
   RADIUS,
   FONT_SIZE,
-  SHADOWS,
+  SHADOW: shadow, // uppercase alias for legacy code
+  SHADOWS: shadow,
+  // Legacy text object (some components expect `theme.text`)
+  text: colors.text,
   family: font.family,
 };
 

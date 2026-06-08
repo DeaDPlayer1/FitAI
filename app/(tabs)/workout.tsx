@@ -1,1071 +1,1445 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, Modal, Alert, ActivityIndicator,
-  Dimensions, Platform
+  RefreshControl, Dimensions, TextInput, Modal, Platform, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import Animated, { FadeInDown, FadeInRight, FadeIn } from 'react-native-reanimated';
-import { theme } from '@/constants/theme';
+import { Feather } from '@expo/vector-icons';
+import Svg, { Path, Circle, Line, Rect, G, Text as SvgText, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '@/lib/supabase';
 import { useUserStore } from '@/store/userStore';
+import { theme } from '@/constants/theme';
 
-const { width } = Dimensions.get('window');
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const SCREEN_W = Dimensions.get('window').width;
+const CARD_H = 200;
+const CHART_W = SCREEN_W - 72;
+const CHART_H = 148;
+const GRID_GAP = 10;
+const CARD_RADIUS = 20;
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+const PURPLE = '#6A49FA';
+const PURPLE_DEEP = '#453284';
+const PURPLE_MID = 'rgba(106,73,250,0.5)';
+const PURPLE_GLOW = 'rgba(106,73,250,0.12)';
+const GREEN = '#34C759';
+const ORANGE = '#FF9500';
+const RED = '#FF3B30';
+const CARD_BG = '#FFFFFF';
+const MUTED = theme.colors.text.muted || '#8E8E93';
+const PRIMARY = theme.colors.text.primary || '#1C1C1E';
+const BG = theme.colors.bg.primary || '#F6F5FB';
 
-function parseDayFromTemplate(template: any): string | null {
-  try {
-    if (template.notes) {
-      const parsed = JSON.parse(template.notes);
-      if (parsed.source === 'weekly_split' && parsed.day) return parsed.day;
-    }
-  } catch {}
-  for (const day of DAYS) {
-    if (template.name?.startsWith(`${day}:`)) return day;
-  }
-  return null;
+function getFirstName(fullName: string | null | undefined): string {
+  if (!fullName) return 'Your';
+  return fullName.split(' ')[0];
 }
 
-function parseWorkoutNameFromTemplate(template: any): string {
-  try {
-    if (template.notes) {
-      const parsed = JSON.parse(template.notes);
-      if (parsed.workoutName) return parsed.workoutName;
-    }
-  } catch {}
-  for (const day of DAYS) {
-    if (template.name?.startsWith(`${day}:`)) {
-      return template.name.replace(`${day}: `, '').trim();
-    }
-  }
-  return template.name || 'Workout';
+function formatDate(d: string): string {
+  const dt = new Date(d);
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function getTodayName(): string {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return days[new Date().getDay()];
+function formatDateFull(d: string): string {
+  const dt = new Date(d);
+  return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-// ─── Delete Confirmation Modal ───────────────────────────────────────────────
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-function DeleteModal({
-  visible, onCancel, onConfirm, workoutName, loading
+interface DataPoint {
+  label: string;
+  value: number;
+  date: string;
+  meta?: Record<string, any>;
+}
+
+// ── Premium Line Chart ───────────────────────────────────────────────────────
+
+const LineChartPremium = React.memo(({
+  data, color, onPointTap, activePoint,
 }: {
-  visible: boolean; onCancel: () => void; onConfirm: () => void;
-  workoutName: string; loading: boolean;
+  data: DataPoint[]; color?: string; onPointTap?: (p: DataPoint, idx: number) => void; activePoint?: number | null;
+}) => {
+  const activeIdx = activePoint ?? undefined;
+  const c = color || PURPLE;
+  if (data.length < 2) return null;
+  const vals = data.map(d => d.value);
+  const dataMin = Math.min(...vals);
+  const dataMax = Math.max(...vals);
+  const padding = Math.max((dataMax - dataMin) * 0.15, 0.5);
+  const maxV = dataMax + padding;
+  const minV = Math.max(dataMin - padding, 0);
+  const range = maxV - minV || 1;
+  const padX = 28;
+  const padY = 12;
+  const graphW = CHART_W - padX;
+  const graphH = CHART_H - padY * 2;
+
+  const points = data.map((d, i) => {
+    const x = padX + (i / Math.max(data.length - 1, 1)) * graphW;
+    const y = padY + graphH - ((d.value - minV) / range) * graphH;
+    return { x, y, pt: d, idx: i };
+  });
+
+  const linePath = points.map((p, i) =>
+    `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`
+  ).join(' ');
+
+  const areaPath = `${linePath} L${points[points.length - 1].x},${padY + graphH} L${points[0].x},${padY + graphH} Z`;
+
+  const yTicks = 3;
+  const tickLabels = Array.from({ length: yTicks }, (_, i) => {
+    const v = minV + (range / (yTicks - 1)) * i;
+    return Math.round(v * 10) / 10;
+  });
+
+  return (
+    <View>
+      <Svg width={CHART_W} height={CHART_H}>
+        <Defs>
+          <SvgGradient id={`lineFill-${c.replace('#','')}`} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={c} stopOpacity={0.3} />
+            <Stop offset="1" stopColor={c} stopOpacity={0.02} />
+          </SvgGradient>
+        </Defs>
+        {tickLabels.map((v, i) => {
+          const y = padY + graphH - ((v - minV) / range) * graphH;
+          return (
+            <G key={i}>
+              <Line x1={padX} y1={y} x2={CHART_W} y2={y} stroke="#E8E8ED" strokeWidth={0.5} />
+              <SvgText x={padX - 4} y={y + 4} fontSize={9} fill={MUTED} textAnchor="end" fontFamily="Inter">
+                {v}
+              </SvgText>
+            </G>
+          );
+        })}
+        <Path d={areaPath} fill={`url(#lineFill-${c.replace('#','')}`} />
+        <Path d={linePath} stroke={c} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((p, i) => {
+          const isActive = activePoint === i;
+          return (
+            <G key={i}>
+              <Circle cx={p.x} cy={p.y} r={isActive ? 7 : 4} fill={isActive ? '#FFFFFF' : c} stroke={c} strokeWidth={isActive ? 3 : 0} />
+              {isActive && (
+                <Circle cx={p.x} cy={p.y} r={10} fill={c} opacity={0.15} />
+              )}
+            </G>
+          );
+        })}
+      </Svg>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2, paddingHorizontal: padX }}>
+        <Text style={{ fontSize: 9, color: MUTED }}>{data[0].label}</Text>
+        <Text style={{ fontSize: 9, color: MUTED }}>{data[data.length - 1].label}</Text>
+      </View>
+      {points.map((p, i) => (
+        <TouchableOpacity
+          key={i}
+          onPress={() => onPointTap?.(p.pt, i)}
+          style={{ position: 'absolute', left: p.x - 16, top: p.y - 16, width: 32, height: 32, borderRadius: 16 }}
+          activeOpacity={0.6}
+        />
+      ))}
+    </View>
+  );
+});
+
+// ── Premium Bar Chart ────────────────────────────────────────────────────────
+
+const BarChartPremium = React.memo(({
+  data, color, goalLine, onBarTap, highlightIndex,
+}: {
+  data: DataPoint[]; color?: string; goalLine?: number; onBarTap?: (p: DataPoint, idx: number) => void; highlightIndex?: number;
+}) => {
+  const c = color || PURPLE;
+  if (data.length === 0) return null;
+  const vals = data.map(d => d.value);
+  const maxV = Math.max(...vals, goalLine || 0, 1);
+  const barGap = Math.max(CHART_W / data.length / 5, 3);
+  const barW = Math.max((CHART_W - barGap * (data.length + 1)) / data.length, 6);
+  const padX = 4;
+  const padY = 18;
+  const graphH = CHART_H - padY;
+
+  return (
+    <View>
+      <Svg width={CHART_W} height={CHART_H}>
+        <Defs>
+          <SvgGradient id={`barFill-${c.replace('#','')}`} x1="0" y1="1" x2="0" y2="0">
+            <Stop offset="0" stopColor={c} stopOpacity={0.6} />
+            <Stop offset="1" stopColor={c} stopOpacity={1} />
+          </SvgGradient>
+        </Defs>
+        {goalLine != null && goalLine > 0 && (
+          <G>
+            <Line
+              x1={padX} y1={padY + graphH - (goalLine / maxV) * graphH}
+              x2={CHART_W - padX} y2={padY + graphH - (goalLine / maxV) * graphH}
+              stroke={PURPLE_MID} strokeWidth={1} strokeDasharray="4,3"
+            />
+            <SvgText x={CHART_W - padX} y={padY + graphH - (goalLine / maxV) * graphH - 4} fontSize={8} fill={PURPLE_MID} textAnchor="end" fontFamily="Inter">
+              Goal {Math.round(goalLine)}
+            </SvgText>
+          </G>
+        )}
+        {data.map((d, i) => {
+          const barH = (d.value / maxV) * graphH;
+          const x = padX + barGap + i * (barW + barGap);
+          const y = padY + graphH - barH;
+          const isHighlight = highlightIndex === i;
+          const fill = d.value === 0 ? '#E8E8ED' : `url(#barFill-${c.replace('#','')}`;
+          const fillSolid = d.value === 0 ? '#E8E8ED' : (isHighlight ? '#4A2FD0' : c);
+          return (
+            <G key={i}>
+              <Rect x={x} y={y} width={barW} height={Math.max(barH, d.value > 0 ? 2 : 0)} rx={barW / 2} fill={fillSolid} />
+              {isHighlight && (
+                <Rect x={x - 1} y={y - 1} width={barW + 2} height={Math.max(barH, d.value > 0 ? 2 : 0) + 2} rx={barW / 2 + 1} fill="none" stroke={c} strokeWidth={1.5} />
+              )}
+            </G>
+          );
+        })}
+        {data.map((d, i) => {
+          const x = padX + barGap + i * (barW + barGap);
+          return (
+            <TouchableOpacity
+              key={i}
+              onPress={() => onBarTap?.(d, i)}
+              style={{ position: 'absolute', left: x, top: padY, width: barW, height: graphH }}
+              activeOpacity={0.6}
+            />
+          );
+        })}
+      </Svg>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2, paddingHorizontal: padX + 2 }}>
+        {data.map((d, i) => (
+          <Text key={i} style={{ fontSize: 8, color: MUTED, width: barW + barGap, textAlign: 'center' }} numberOfLines={1}>
+            {d.label}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+});
+
+// ── Premium Area Chart ───────────────────────────────────────────────────────
+
+const AreaChartPremium = React.memo(({
+  data, color, onPointTap, activePoint,
+}: {
+  data: DataPoint[]; color?: string; onPointTap?: (p: DataPoint, idx: number) => void; activePoint?: number | null;
+}) => {
+  const c = color || PURPLE;
+  if (data.length < 2) return null;
+  const vals = data.map(d => d.value);
+  const dataMin = Math.min(...vals);
+  const dataMax = Math.max(...vals);
+  const padding = Math.max((dataMax - dataMin) * 0.15, 0.5);
+  const maxV = dataMax + padding;
+  const minV = Math.max(dataMin - padding, 0);
+  const range = maxV - minV || 1;
+  const padX = 28;
+  const padY = 12;
+  const graphW = CHART_W - padX;
+  const graphH = CHART_H - padY * 2;
+
+  const points = data.map((d, i) => {
+    const x = padX + (i / Math.max(data.length - 1, 1)) * graphW;
+    const y = padY + graphH - ((d.value - minV) / range) * graphH;
+    return { x, y, pt: d, idx: i };
+  });
+
+  const linePath = points.map((p, i) =>
+    `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`
+  ).join(' ');
+  const areaPath = `${linePath} L${points[points.length - 1].x},${padY + graphH} L${points[0].x},${padY + graphH} Z`;
+
+  const yTicks = 3;
+  const tickLabels = Array.from({ length: yTicks }, (_, i) => {
+    const v = minV + (range / (yTicks - 1)) * i;
+    return Math.round(v * 10) / 10;
+  });
+
+  return (
+    <View>
+      <Svg width={CHART_W} height={CHART_H}>
+        <Defs>
+          <SvgGradient id={`areaFill-${c.replace('#','')}`} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={c} stopOpacity={0.25} />
+            <Stop offset="0.4" stopColor={c} stopOpacity={0.1} />
+            <Stop offset="1" stopColor={c} stopOpacity={0.01} />
+          </SvgGradient>
+        </Defs>
+        {tickLabels.map((v, i) => {
+          const y = padY + graphH - ((v - minV) / range) * graphH;
+          return (
+            <G key={i}>
+              <Line x1={padX} y1={y} x2={CHART_W} y2={y} stroke="#E8E8ED" strokeWidth={0.5} />
+              <SvgText x={padX - 4} y={y + 4} fontSize={9} fill={MUTED} textAnchor="end" fontFamily="Inter">
+                {v}
+              </SvgText>
+            </G>
+          );
+        })}
+        <Path d={areaPath} fill={`url(#areaFill-${c.replace('#','')}`} />
+        <Path d={linePath} stroke={c} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((p, i) => {
+          const isActive = activePoint === i;
+          return (
+            <G key={i}>
+              {isActive && <Circle cx={p.x} cy={p.y} r={10} fill={c} opacity={0.15} />}
+              <Circle cx={p.x} cy={p.y} r={isActive ? 6 : 3} fill={isActive ? '#FFFFFF' : c} stroke={c} strokeWidth={isActive ? 2.5 : 0} />
+            </G>
+          );
+        })}
+      </Svg>
+      {points.map((p, i) => (
+        <TouchableOpacity
+          key={i}
+          onPress={() => onPointTap?.(p.pt, i)}
+          style={{ position: 'absolute', left: p.x - 16, top: p.y - 16, width: 32, height: 32, borderRadius: 16 }}
+          activeOpacity={0.6}
+        />
+      ))}
+    </View>
+  );
+});
+
+// ── Tooltip ──────────────────────────────────────────────────────────────────
+
+function TooltipBox({ title, lines, x, visible }: {
+  title: string; lines: string[]; x: number; visible: boolean;
+}) {
+  if (!visible) return null;
+  return (
+    <Animated.View entering={FadeIn.duration(120)} style={[tipSt.box, { left: Math.max(4, Math.min(x - 64, CHART_W - 140)) }]}>
+      <Text style={tipSt.title}>{title}</Text>
+      {lines.map((l, i) => (
+        <Text key={i} style={tipSt.line}>{l}</Text>
+      ))}
+      <View style={tipSt.arrow} />
+    </Animated.View>
+  );
+}
+
+const tipSt = StyleSheet.create({
+  box: {
+    position: 'absolute', top: -48, width: 140,
+    backgroundColor: '#1C1C1E', borderRadius: 12, padding: 12, paddingBottom: 10,
+    zIndex: 100,
+  },
+  arrow: {
+    position: 'absolute', bottom: -5, left: 60,
+    width: 10, height: 10, backgroundColor: '#1C1C1E',
+    transform: [{ rotate: '45deg' }],
+  },
+  title: { fontSize: 11, fontWeight: '700', color: '#FFFFFF', marginBottom: 4, letterSpacing: 0.2 },
+  line: { fontSize: 10, color: '#C7C7CC', lineHeight: 14 },
+});
+
+// ── Metric Card ──────────────────────────────────────────────────────────────
+
+function MetricCard({
+  label, value, sublabel, accent, trend, icon, delay = 0,
+}: {
+  label: string; value: string; sublabel?: string; accent?: string; trend?: { direction: 'up' | 'down' | 'flat'; label: string }; icon?: keyof typeof Feather.glyphMap; delay?: number;
+}) {
+  const trendColor = trend?.direction === 'up' ? GREEN : trend?.direction === 'down' ? RED : MUTED;
+  return (
+    <Animated.View entering={FadeInDown.delay(delay).duration(300)} style={[metricSt.card, accent ? { borderLeftWidth: 3, borderLeftColor: accent } : {}]}>
+      <View style={metricSt.top}>
+        {icon && (
+          <View style={[metricSt.iconBox, { backgroundColor: accent ? `${accent}18` : PURPLE_GLOW }]}>
+            <Feather name={icon} size={13} color={accent || PURPLE} />
+          </View>
+        )}
+        <Text style={metricSt.label} numberOfLines={1}>{label}</Text>
+      </View>
+      <Text style={metricSt.value} numberOfLines={1}>{value}</Text>
+      {sublabel && <Text style={metricSt.sublabel} numberOfLines={1}>{sublabel}</Text>}
+      {trend && (
+        <View style={metricSt.trendRow}>
+          <Feather name={trend.direction === 'up' ? 'trending-up' : trend.direction === 'down' ? 'trending-down' : 'minus'} size={11} color={trendColor} />
+          <Text style={[metricSt.trendLabel, { color: trendColor }]}>{trend.label}</Text>
+        </View>
+      )}
+    </Animated.View>
+  );
+}
+
+const metricSt = StyleSheet.create({
+  card: {
+    backgroundColor: CARD_BG, borderRadius: 18, padding: 14, flex: 1,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+  },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  iconBox: { width: 24, height: 24, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  label: { fontSize: 11, fontWeight: '600', color: MUTED, letterSpacing: 0.2 },
+  value: { fontSize: 20, fontWeight: '800', color: PRIMARY, letterSpacing: -0.3 },
+  sublabel: { fontSize: 10, color: MUTED, marginTop: 1 },
+  trendRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4 },
+  trendLabel: { fontSize: 10, fontWeight: '600' },
+});
+
+// ── Section Header ───────────────────────────────────────────────────────────
+
+function AnalyticsSectionHeader({
+  title, value, trend, icon,
+}: {
+  title: string; value: string; trend?: { direction: 'up' | 'down' | 'flat'; label: string }; icon: string;
+}) {
+  const trendColor = trend?.direction === 'up' ? GREEN : trend?.direction === 'down' ? RED : MUTED;
+  return (
+    <View style={secHeadSt.wrapper}>
+      <View style={secHeadSt.left}>
+        <Text style={secHeadSt.icon}>{icon}</Text>
+        <Text style={secHeadSt.title}>{title}</Text>
+      </View>
+      <View style={secHeadSt.right}>
+        <Text style={secHeadSt.value}>{value}</Text>
+        {trend && (
+          <View style={secHeadSt.trendRow}>
+            <Feather name={trend.direction === 'up' ? 'trending-up' : trend.direction === 'down' ? 'trending-down' : 'minus'} size={12} color={trendColor} />
+            <Text style={[secHeadSt.trendLabel, { color: trendColor }]}>{trend.label}</Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const secHeadSt = StyleSheet.create({
+  wrapper: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingVertical: 12,
+  },
+  left: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  icon: { fontSize: 16 },
+  title: { fontSize: 17, fontWeight: '700', color: PRIMARY, letterSpacing: -0.2 },
+  right: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  value: { fontSize: 14, fontWeight: '600', color: MUTED },
+  trendRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  trendLabel: { fontSize: 12, fontWeight: '600' },
+});
+
+// ── Filter Pills ─────────────────────────────────────────────────────────────
+
+interface FilterPill {
+  key: string; label: string;
+}
+
+function FilterRow({
+  options, selected, onSelect, compact,
+}: {
+  options: FilterPill[]; selected: string; onSelect: (key: string) => void; compact?: boolean;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.modalOverlay}>
-        <Animated.View entering={FadeInDown.springify()} style={styles.deleteModal}>
-          <View style={styles.deleteIconBox}>
-            <Feather name="trash-2" size={28} color="#EF4444" />
-          </View>
-          <Text style={styles.deleteTitle}>Delete Workout?</Text>
-          <Text style={styles.deleteSubtitle}>
-            <Text style={{ fontFamily: theme.font.family.bold, color: theme.colors.text.primary }}>
-              "{workoutName}"
+    <View style={filterRowSt.row}>
+      {options.map(o => {
+        const isActive = o.key === selected;
+        return (
+          <TouchableOpacity
+            key={o.key}
+            onPress={() => onSelect(o.key)}
+            style={[filterRowSt.pill, isActive && filterRowSt.activePill, compact && filterRowSt.compactPill]}
+            activeOpacity={0.7}
+          >
+            <Text style={[filterRowSt.pillText, isActive && filterRowSt.activeText, compact && filterRowSt.compactText]}>
+              {o.label}
             </Text>
-            {' '}will be permanently removed. This cannot be undone.
-          </Text>
-          <View style={styles.deleteActions}>
-            <TouchableOpacity style={styles.cancelBtn} onPress={onCancel} activeOpacity={0.7}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.confirmDeleteBtn}
-              onPress={onConfirm}
-              activeOpacity={0.7}
-              disabled={loading}
-            >
-              {loading
-                ? <ActivityIndicator size="small" color="white" />
-                : <Text style={styles.confirmDeleteText}>Delete</Text>
-              }
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-      </View>
-    </Modal>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
   );
 }
 
-// ─── Progress / Analytics Tab ────────────────────────────────────────────────
+const filterRowSt = StyleSheet.create({
+  row: { flexDirection: 'row', gap: 6 },
+  pill: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10,
+    backgroundColor: '#F0EFF5',
+  },
+  activePill: { backgroundColor: PURPLE },
+  compactPill: { paddingHorizontal: 10, paddingVertical: 5 },
+  pillText: { fontSize: 12, fontWeight: '600', color: MUTED },
+  activeText: { color: '#FFFFFF' },
+  compactText: { fontSize: 11 },
+});
 
-function ProgressTab({ userId }: { userId: string }) {
-  const [stats, setStats] = useState<any>(null);
-  const [recentSessions, setRecentSessions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+// ── Stat Chip Row ────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    loadStats();
-  }, []);
-
-  const loadStats = async () => {
-    try {
-      const { data: sessions } = await supabase
-        .from('workout_sessions')
-        .select('id, name, created_at')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      const { count: totalSessions } = await supabase
-        .from('workout_sessions')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId);
-
-      const { count: totalSets } = await supabase
-        .from('workout_session_sets')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .eq('is_completed', true);
-
-      setRecentSessions(sessions || []);
-      setStats({ totalSessions: totalSessions || 0, totalSets: totalSets || 0 });
-    } catch (e) {
-      console.error('Error loading stats:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.progressLoading}>
-        <ActivityIndicator color={theme.colors.accent.primary} />
-      </View>
-    );
-  }
-
-  const today = getTodayName();
-
+function StatChip({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
-      {/* Stats Row */}
-      <View style={styles.statsRow}>
-        <Animated.View entering={FadeInDown.delay(0)} style={styles.statCard}>
-          <View style={[styles.statIconBox, { backgroundColor: '#EDE9FE' }]}>
-            <MaterialCommunityIcons name="lightning-bolt" size={22} color={theme.colors.accent.primary} />
-          </View>
-          <Text style={styles.statValue}>{stats?.totalSessions ?? 0}</Text>
-          <Text style={styles.statLabel}>Total Sessions</Text>
-        </Animated.View>
-
-        <Animated.View entering={FadeInDown.delay(80)} style={styles.statCard}>
-          <View style={[styles.statIconBox, { backgroundColor: '#D1FAE5' }]}>
-            <MaterialCommunityIcons name="check-circle" size={22} color="#10B981" />
-          </View>
-          <Text style={styles.statValue}>{stats?.totalSets ?? 0}</Text>
-          <Text style={styles.statLabel}>Sets Completed</Text>
-        </Animated.View>
-
-        <Animated.View entering={FadeInDown.delay(160)} style={styles.statCard}>
-          <View style={[styles.statIconBox, { backgroundColor: '#FEF3C7' }]}>
-            <MaterialCommunityIcons name="fire" size={22} color="#F59E0B" />
-          </View>
-          <Text style={styles.statValue}>{Math.min(7, stats?.totalSessions ?? 0)}</Text>
-          <Text style={styles.statLabel}>Day Streak</Text>
-        </Animated.View>
-      </View>
-
-      {/* Weekly Bar Chart (simplified) */}
-      <Animated.View entering={FadeInDown.delay(200)} style={styles.weeklyChart}>
-        <Text style={styles.chartTitle}>This Week</Text>
-        <View style={styles.barsRow}>
-          {DAYS.map((day, i) => {
-            const isToday = day === today;
-            const hasSession = recentSessions.some(s => {
-              const d = new Date(s.created_at);
-              return d.getDay() === (i + 1) % 7;
-            });
-            const barHeight = hasSession ? 48 + Math.random() * 24 : 12;
-            return (
-              <View key={day} style={styles.barGroup}>
-                <View style={[
-                  styles.bar,
-                  { height: barHeight },
-                  hasSession && styles.barActive,
-                  isToday && styles.barToday,
-                ]} />
-                <Text style={[styles.barLabel, isToday && styles.barLabelToday]}>
-                  {day.slice(0, 1)}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      </Animated.View>
-
-      {/* Recent Sessions */}
-      <Text style={styles.sectionHeader}>Recent Sessions</Text>
-      {recentSessions.length === 0 ? (
-        <View style={styles.emptyProgress}>
-          <MaterialCommunityIcons name="dumbbell" size={40} color={theme.colors.accent.secondary} />
-          <Text style={styles.emptyProgressText}>No sessions yet. Start your first workout!</Text>
-        </View>
-      ) : (
-        recentSessions.map((session, idx) => {
-          const date = new Date(session.created_at);
-          const dateStr = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-          return (
-            <Animated.View
-              key={session.id}
-              entering={FadeInDown.delay(idx * 60)}
-              style={styles.sessionCard}
-            >
-              <View style={styles.sessionIconBox}>
-                <MaterialCommunityIcons name="dumbbell" size={18} color={theme.colors.accent.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sessionName} numberOfLines={1}>{session.name}</Text>
-                <Text style={styles.sessionDate}>{dateStr}</Text>
-              </View>
-              <View style={styles.sessionBadge}>
-                <Text style={styles.sessionBadgeText}>Done</Text>
-              </View>
-            </Animated.View>
-          );
-        })
-      )}
-    </ScrollView>
+    <View style={statChipSt.box}>
+      <Text style={[statChipSt.value, accent ? { color: accent } : {}]}>{value}</Text>
+      <Text style={statChipSt.label}>{label}</Text>
+    </View>
   );
 }
 
-// ─── Main Screen ─────────────────────────────────────────────────────────────
+const statChipSt = StyleSheet.create({
+  box: {
+    backgroundColor: '#F3F1F8', borderRadius: 14, padding: 12, alignItems: 'center', flex: 1,
+  },
+  value: { fontSize: 16, fontWeight: '800', color: PRIMARY, letterSpacing: -0.2 },
+  label: { fontSize: 10, color: MUTED, marginTop: 2, textAlign: 'center', fontWeight: '500' },
+});
+
+// ── Empty State ──────────────────────────────────────────────────────────────
+
+function AnalyticsEmptyState({
+  title, subtitle, actionLabel, onAction, icon,
+}: {
+  title: string; subtitle: string; actionLabel?: string; onAction?: () => void; icon?: string;
+}) {
+  return (
+    <Animated.View entering={FadeIn.duration(300)} style={emptySt.wrapper}>
+      <View style={emptySt.iconCircle}>
+        <Feather name={(icon as any) || 'bar-chart-2'} size={22} color={PURPLE} />
+      </View>
+      <Text style={emptySt.title}>{title}</Text>
+      <Text style={emptySt.subtitle}>{subtitle}</Text>
+      {actionLabel && onAction && (
+        <TouchableOpacity style={emptySt.btn} onPress={onAction} activeOpacity={0.8}>
+          <LinearGradient colors={[PURPLE, '#5A3DE0']} style={emptySt.btnGrad}>
+            <Text style={emptySt.btnText}>{actionLabel}</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
+    </Animated.View>
+  );
+}
+
+const emptySt = StyleSheet.create({
+  wrapper: { alignItems: 'center', paddingVertical: 24, paddingHorizontal: 20 },
+  iconCircle: {
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: PURPLE_GLOW, alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+  },
+  title: { fontSize: 15, fontWeight: '700', color: PRIMARY, marginBottom: 4 },
+  subtitle: { fontSize: 13, color: MUTED, textAlign: 'center', lineHeight: 19, marginBottom: 12 },
+  btn: { borderRadius: 12, overflow: 'hidden' },
+  btnGrad: { paddingHorizontal: 20, paddingVertical: 10, alignItems: 'center', borderRadius: 12 },
+  btnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+});
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface ExerciseInfo {
+  id: string;
+  name: string;
+  count: number;
+}
+
+interface WorkoutDataPoint {
+  date: string;
+  max_weight: number;
+  sets: number;
+  max_reps: number;
+}
+
+interface CalorieDataPoint {
+  date: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+interface WeightDataPoint {
+  date: string;
+  weight: number;
+}
+
+// ── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function WorkoutScreen() {
   const router = useRouter();
   const { user } = useUserStore();
-  const [templates, setTemplates] = useState<any[]>([]);
+  const userId = user?.id;
+
+  const [profile, setProfile] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'schedule' | 'progress'>('schedule');
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const [deleting, setDeleting] = useState(false);
+
+  // Section 1 – Workout
+  const [exercises, setExercises] = useState<ExerciseInfo[]>([]);
+  const [selectedEx, setSelectedEx] = useState<string | null>(null);
+  const [workoutData, setWorkoutData] = useState<WorkoutDataPoint[]>([]);
+  const [workoutRange, setWorkoutRange] = useState<'1M' | '3M' | '6M' | 'All'>('1M');
+  const [workoutLoading, setWorkoutLoading] = useState(false);
+  const [workoutTooltip, setWorkoutTooltip] = useState<{ point: WorkoutDataPoint; x: number } | null>(null);
+  const [workoutActiveIdx, setWorkoutActiveIdx] = useState<number | null>(null);
+
+  // Section 2 – Calories
+  const [calorieData, setCalorieData] = useState<CalorieDataPoint[]>([]);
+  const [calRange, setCalRange] = useState<'week' | '4W' | '3M'>('week');
+  const [calLoading, setCalLoading] = useState(false);
+  const [calTooltip, setCalTooltip] = useState<{ point: CalorieDataPoint; x: number } | null>(null);
+  const [calActiveIdx, setCalActiveIdx] = useState<number | null>(null);
+
+  // Section 3 – Weight
+  const [weightData, setWeightData] = useState<WeightDataPoint[]>([]);
+  const [weightRange, setWeightRange] = useState<'1W' | '1M' | '3M' | 'All'>('1M');
+  const [weightUnit, setWeightUnit] = useState<'kg' | 'lbs'>('kg');
+  const [weightLoading, setWeightLoading] = useState(false);
+  const [weightTooltip, setWeightTooltip] = useState<{ point: WeightDataPoint; x: number } | null>(null);
+  const [weightActiveIdx, setWeightActiveIdx] = useState<number | null>(null);
+  const [showWeightSheet, setShowWeightSheet] = useState(false);
+  const [weightInput, setWeightInput] = useState('');
 
   useEffect(() => {
-    if (user?.id) fetchTemplates();
-  }, [user?.id]);
+    if (userId) {
+      fetchProfile();
+      fetchExercises();
+      fetchCalorieData();
+      fetchWeightData();
+    }
+  }, [userId]);
 
-  const fetchTemplates = async () => {
+  // ── Profile ──
+  const fetchProfile = async () => {
+    if (!userId) return;
+    const { data } = await supabase.from('profiles').select('full_name, goal, calorie_goal, weight_unit').eq('id', userId).single();
+    if (data) {
+      setProfile(data);
+      if (data.weight_unit === 'lbs') setWeightUnit('lbs');
+    }
+  };
+
+  const firstName = useMemo(() => getFirstName(profile?.full_name), [profile?.full_name]);
+  const goal = profile?.goal;
+  const isLossGoal = goal === 'fat_loss';
+  const calGoal = profile?.calorie_goal;
+
+  // ── Section 1: Workout Progress ──
+  const fetchExercises = async () => {
+    if (!userId) return;
+    setWorkoutLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('workout_templates')
-        .select('id, name, notes, created_at')
-        .eq('user_id', user!.id)
-        .order('created_at', { ascending: true });
-      if (error) throw error;
-      setTemplates(data || []);
+      const { data } = await supabase
+        .from('exercise_progression')
+        .select('exercise_id, exercise_name, id', { head: false, count: 'exact' })
+        .eq('user_id', userId)
+        .order('exercise_name', { ascending: true });
+      const distinct = new Map<string, { id: string; name: string; count: number }>();
+      for (const row of data || []) {
+        const key = row.exercise_id || row.exercise_name;
+        if (!key) continue;
+        if (!distinct.has(key)) {
+          distinct.set(key, { id: row.exercise_id || key, name: row.exercise_name, count: 0 });
+        }
+        distinct.get(key)!.count++;
+      }
+      const list = Array.from(distinct.values()).sort((a, b) => b.count - a.count);
+      setExercises(list);
+      if (list.length > 0 && !selectedEx) {
+        setSelectedEx(list[0].id);
+      }
     } catch (e) {
-      console.error('Error fetching templates:', e);
+      console.error('fetchExercises:', e);
     } finally {
-      setRefreshing(false);
+      setWorkoutLoading(false);
     }
   };
 
-  const onRefresh = () => { setRefreshing(true); fetchTemplates(); };
+  useEffect(() => {
+    if (selectedEx && userId) fetchWorkoutData();
+  }, [selectedEx, workoutRange, userId]);
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
+  const fetchWorkoutData = async () => {
+    if (!userId || !selectedEx) return;
+    setWorkoutLoading(true);
+    setWorkoutTooltip(null);
+    setWorkoutActiveIdx(null);
     try {
-      const { error } = await supabase
-        .from('workout_templates')
-        .delete()
-        .eq('id', deleteTarget.id);
-      if (error) throw error;
-      setTemplates(prev => prev.filter(t => t.id !== deleteTarget.id));
-      setDeleteTarget(null);
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to delete');
+      const now = new Date();
+      let startDate: Date | null = null;
+      if (workoutRange === '1M') { startDate = new Date(now); startDate.setMonth(startDate.getMonth() - 1); }
+      if (workoutRange === '3M') { startDate = new Date(now); startDate.setMonth(startDate.getMonth() - 3); }
+      if (workoutRange === '6M') { startDate = new Date(now); startDate.setMonth(startDate.getMonth() - 6); }
+
+      let query = supabase
+        .from('exercise_progression')
+        .select('session_date, weight, reps, set_number')
+        .eq('user_id', userId)
+        .eq('exercise_id', selectedEx)
+        .order('session_date', { ascending: true });
+
+      if (startDate) query = query.gte('session_date', startDate.toISOString().split('T')[0]);
+
+      const { data } = await query;
+
+      const grouped = new Map<string, { weights: number[]; totalSets: number; reps: number[] }>();
+      for (const row of data || []) {
+        const date = row.session_date;
+        if (!grouped.has(date)) grouped.set(date, { weights: [], totalSets: 0, reps: [] });
+        const g = grouped.get(date)!;
+        g.weights.push(Number(row.weight) || 0);
+        g.totalSets++;
+        if (row.reps) g.reps.push(Number(row.reps));
+      }
+
+      const points: WorkoutDataPoint[] = Array.from(grouped.entries())
+        .map(([date, g]) => ({
+          date,
+          max_weight: Math.max(...g.weights, 0),
+          sets: g.totalSets,
+          max_reps: Math.max(...g.reps, 0),
+        }))
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      if (workoutRange === 'All') {
+        setWorkoutData(points);
+      } else {
+        setWorkoutData(points.slice(-8));
+      }
+    } catch (e) {
+      console.error('fetchWorkoutData:', e);
     } finally {
-      setDeleting(false);
+      setWorkoutLoading(false);
     }
   };
 
-  // Build day-to-template map
-  const dayMap: Record<string, any> = {};
-  for (const t of templates) {
-    const day = parseDayFromTemplate(t);
-    if (day) dayMap[day] = t;
-  }
+  const chartWorkoutData: DataPoint[] = useMemo(() =>
+    workoutData.map(d => ({ label: formatDate(d.date), value: d.max_weight, date: d.date, meta: d })),
+    [workoutData]
+  );
 
-  // Loose templates (not tied to any day)
-  const looseTemplates = templates.filter(t => !parseDayFromTemplate(t));
+  const pb = useMemo(() => {
+    if (workoutData.length === 0) return null;
+    return workoutData.reduce((best, d) => d.max_weight > best.max_weight ? d : best, workoutData[0]);
+  }, [workoutData]);
 
-  const today = getTodayName();
+  const lastSession = useMemo(() => {
+    if (workoutData.length === 0) return null;
+    return workoutData[workoutData.length - 1];
+  }, [workoutData]);
+
+  const selectedExName = useMemo(() => {
+    return exercises.find(e => e.id === selectedEx)?.name || '';
+  }, [exercises, selectedEx]);
+
+  // ── Section 2: Calories ──
+  const fetchCalorieData = async () => {
+    if (!userId) return;
+    setCalLoading(true);
+    setCalTooltip(null);
+    setCalActiveIdx(null);
+    try {
+      const now = new Date();
+      let startDate: Date;
+      let endDate = new Date(now);
+
+      if (calRange === 'week') {
+        const day = now.getDay();
+        const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+        startDate = new Date(now.setDate(diff));
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(startDate);
+        endDate.setDate(endDate.getDate() + 6);
+      } else if (calRange === '4W') {
+        startDate = new Date(now); startDate.setDate(startDate.getDate() - 27);
+      } else {
+        startDate = new Date(now); startDate.setMonth(startDate.getMonth() - 3);
+      }
+
+      const { data } = await supabase
+        .from('meal_logs')
+        .select('calories, protein_g, carbs_g, fat_g, logged_at')
+        .eq('user_id', userId)
+        .gte('logged_at', startDate.toISOString())
+        .lte('logged_at', endDate.toISOString())
+        .order('logged_at', { ascending: true });
+
+      const grouped = new Map<string, { cal: number; pro: number; carb: number; fat: number }>();
+      for (const row of data || []) {
+        const d = new Date(row.logged_at).toISOString().split('T')[0];
+        if (!grouped.has(d)) grouped.set(d, { cal: 0, pro: 0, carb: 0, fat: 0 });
+        const g = grouped.get(d)!;
+        g.cal += Number(row.calories) || 0;
+        g.pro += Number(row.protein_g) || 0;
+        g.carb += Number(row.carbs_g) || 0;
+        g.fat += Number(row.fat_g) || 0;
+      }
+
+      let points: CalorieDataPoint[];
+      if (calRange === 'week') {
+        points = DAY_LABELS.map((_, i) => {
+          const d = new Date(startDate);
+          d.setDate(d.getDate() + i);
+          const key = d.toISOString().split('T')[0];
+          const g = grouped.get(key);
+          return {
+            date: key,
+            calories: g?.cal || 0,
+            protein: g?.pro || 0,
+            carbs: g?.carb || 0,
+            fat: g?.fat || 0,
+          };
+        });
+      } else {
+        points = Array.from(grouped.entries()).map(([date, g]) => ({
+          date,
+          calories: g.cal,
+          protein: g.pro,
+          carbs: g.carb,
+          fat: g.fat,
+        })).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      }
+      setCalorieData(points);
+    } catch (e) {
+      console.error('fetchCalorieData:', e);
+    } finally {
+      setCalLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (userId) fetchCalorieData();
+  }, [calRange, userId]);
+
+  const chartCalData: DataPoint[] = useMemo(() => {
+    if (calRange === 'week') {
+      return calorieData.map((d, i) => ({ label: DAY_LABELS[i] || '', value: d.calories, date: d.date, meta: d }));
+    }
+    return calorieData.map(d => ({ label: formatDate(d.date), value: d.calories, date: d.date, meta: d }));
+  }, [calorieData, calRange]);
+
+  const calStats = useMemo(() => {
+    if (calorieData.length === 0) return null;
+    const withData = calorieData.filter(d => d.calories > 0);
+    const avg = withData.length > 0 ? Math.round(withData.reduce((s, d) => s + d.calories, 0) / withData.length) : 0;
+    const highest = withData.length > 0 ? Math.round(Math.max(...withData.map(d => d.calories))) : 0;
+    return { avg, highest };
+  }, [calorieData]);
+
+  // ── Section 3: Body Weight ──
+  const fetchWeightData = async () => {
+    if (!userId) return;
+    setWeightLoading(true);
+    setWeightTooltip(null);
+    setWeightActiveIdx(null);
+    try {
+      const { data } = await supabase
+        .from('weight_logs')
+        .select('weight_kg, logged_at')
+        .eq('user_id', userId)
+        .order('logged_at', { ascending: true });
+
+      const pts = (data || []).map(r => ({
+        date: new Date(r.logged_at).toISOString().split('T')[0],
+        weight: Number(r.weight_kg) || 0,
+      }));
+
+      const now = new Date();
+      let startDate: Date | null = null;
+      if (weightRange === '1W') { startDate = new Date(now); startDate.setDate(startDate.getDate() - 7); }
+      if (weightRange === '1M') { startDate = new Date(now); startDate.setMonth(startDate.getMonth() - 1); }
+      if (weightRange === '3M') { startDate = new Date(now); startDate.setMonth(startDate.getMonth() - 3); }
+
+      const filtered = startDate ? pts.filter(p => new Date(p.date) >= startDate!) : pts;
+      setWeightData(filtered);
+    } catch (e) {
+      console.error('fetchWeightData:', e);
+    } finally {
+      setWeightLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (userId) fetchWeightData();
+  }, [weightRange, userId]);
+
+  const chartWeightData: DataPoint[] = useMemo(() => {
+    const unit = weightUnit;
+    return weightData.map(d => ({
+      label: formatDate(d.date),
+      value: unit === 'lbs' ? Math.round(d.weight * 2.20462 * 10) / 10 : d.weight,
+      date: d.date,
+      meta: d,
+    }));
+  }, [weightData, weightUnit]);
+
+  const weightStats = useMemo(() => {
+    if (weightData.length === 0) return null;
+    const first = weightData[0];
+    const last = weightData[weightData.length - 1];
+    const change = last.weight - first.weight;
+    const unit = weightUnit;
+    const val = (v: number) => unit === 'lbs' ? Math.round(v * 2.20462 * 10) / 10 : Math.round(v * 10) / 10;
+    return {
+      start: val(first.weight),
+      startDate: first.date,
+      current: val(last.weight),
+      currentDate: last.date,
+      change: val(change),
+    };
+  }, [weightData, weightUnit]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([fetchProfile(), fetchExercises(), fetchCalorieData(), fetchWeightData()]);
+    setRefreshing(false);
+  }, [userId]);
+
+  const handleSaveWeight = async () => {
+    if (!userId || !weightInput) return;
+    const w = parseFloat(weightInput);
+    if (isNaN(w) || w <= 0) return;
+    const kgVal = weightUnit === 'lbs' ? Math.round(w / 2.20462 * 100) / 100 : Math.round(w * 100) / 100;
+    try {
+      const { error: logError } = await supabase.from('weight_logs').insert({
+        user_id: userId,
+        weight_kg: kgVal,
+        logged_at: new Date().toISOString(),
+      });
+      if (logError) throw logError;
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ weight_kg: kgVal })
+        .eq('id', userId);
+      if (profileError) throw profileError;
+
+      useUserStore.getState().setHealthProfile({ weight: kgVal });
+
+      setShowWeightSheet(false);
+      setWeightInput('');
+      await fetchWeightData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const todayCalories = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const entry = calorieData.find(d => d.date === today);
+    return entry?.calories ?? null;
+  }, [calorieData]);
+
+  const latestWeight = useMemo(() => {
+    if (weightData.length === 0) return null;
+    return weightData[weightData.length - 1].weight;
+  }, [weightData]);
+
+  // ── Computed insights ──
+  const activeDaysThisWeek = useMemo(() => {
+    const today = new Date();
+    const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekStart = weekAgo.toISOString().split('T')[0];
+    const days = new Set(calorieData.filter(d => d.date >= weekStart && d.calories > 0).map(d => d.date));
+    weightData.filter(d => d.date >= weekStart).forEach(d => days.add(d.date));
+    return days.size;
+  }, [calorieData, weightData]);
+
+  const weightTrendLabel = useMemo(() => {
+    if (!weightStats || weightStats.change === 0) return null;
+    const dir = weightStats.change > 0 ? 'up' : 'down';
+    const isGood = isLossGoal ? dir === 'down' : dir === 'up';
+    return {
+      direction: dir as 'up' | 'down',
+      label: `${isGood ? '+' : ''}${weightStats.change.toFixed(1)} ${weightUnit} overall`,
+    };
+  }, [weightStats, weightUnit, isLossGoal]);
+
+  const calTrendLabel = useMemo(() => {
+    if (!calStats || !calGoal) return null;
+    const diff = calStats.avg - calGoal;
+    const direction = diff > 50 ? 'up' : diff < -50 ? 'down' : 'flat';
+    return {
+      direction: direction as 'up' | 'down' | 'flat',
+      label: direction === 'flat' ? 'On track' : `${diff > 0 ? '+' : ''}${Math.round(diff)} vs goal`,
+    };
+  }, [calStats, calGoal]);
+
+  // ── Weight range options ──
+  const calFilterOptions: FilterPill[] = [
+    { key: 'week', label: 'Week' },
+    { key: '4W', label: 'Month' },
+    { key: '3M', label: '3M' },
+  ];
+
+  const workoutFilterOptions: FilterPill[] = [
+    { key: '1M', label: '1M' },
+    { key: '3M', label: '3M' },
+    { key: '6M', label: '6M' },
+    { key: 'All', label: 'All' },
+  ];
+
+  const weightFilterOptions: FilterPill[] = [
+    { key: '1W', label: '1W' },
+    { key: '1M', label: '1M' },
+    { key: '3M', label: '3M' },
+    { key: 'All', label: 'All' },
+  ];
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>My Training</Text>
-          <Text style={styles.subtitle}>
-            {today} · {templates.length} {templates.length === 1 ? 'workout' : 'workouts'}
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={styles.plusBtn}
-          onPress={() => router.push('/workout/builder')}
-          activeOpacity={0.8}
-        >
-          <Feather name="plus" size={22} color="white" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        <TouchableOpacity
-          onPress={() => setActiveTab('schedule')}
-          style={[styles.tab, activeTab === 'schedule' && styles.activeTab]}
-          activeOpacity={0.7}
-        >
-          <Feather name="calendar" size={14} color={activeTab === 'schedule' ? theme.colors.accent.primary : theme.colors.text.muted} />
-          <Text style={[styles.tabText, activeTab === 'schedule' && styles.activeTabText]}>Schedule</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => setActiveTab('progress')}
-          style={[styles.tab, activeTab === 'progress' && styles.activeTab]}
-          activeOpacity={0.7}
-        >
-          <MaterialCommunityIcons name="chart-line" size={14} color={activeTab === 'progress' ? theme.colors.accent.primary : theme.colors.text.muted} />
-          <Text style={[styles.tabText, activeTab === 'progress' && styles.activeTabText]}>Progress</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Content */}
-      {activeTab === 'schedule' ? (
+    <View style={rootSt.screen}>
+      <SafeAreaView style={rootSt.safe} edges={['top']}>
         <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          contentContainerStyle={rootSt.scrollContent}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={theme.colors.accent.primary}
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={PURPLE} />
           }
         >
-          {/* Edit Split Button */}
-          <TouchableOpacity
-            style={styles.editSplitBtn}
-            onPress={() => router.push('/workout/builder')}
-            activeOpacity={0.8}
-          >
-            <Feather name="edit-2" size={16} color="white" />
-            <Text style={styles.editSplitBtnText}>Edit Split</Text>
-          </TouchableOpacity>
+          {/* ═══════════════ HEADER ═══════════════ */}
+          <Animated.View entering={FadeInDown.delay(0).duration(400)} style={headerSt.wrapper}>
+            <View style={headerSt.topRow}>
+              <View style={headerSt.left}>
+                <Text style={headerSt.title}>Progress</Text>
+                <Text style={headerSt.subtitle}>{firstName}'s analytics</Text>
+              </View>
+              <TouchableOpacity style={headerSt.syncBtn} onPress={onRefresh} activeOpacity={0.7}>
+                <Feather name="refresh-cw" size={16} color={PURPLE} />
+              </TouchableOpacity>
+            </View>
+            <View style={headerSt.metaRow}>
+              <View style={headerSt.streakBadge}>
+                <Feather name="zap" size={12} color={ORANGE} />
+                <Text style={headerSt.streakText}>{activeDaysThisWeek} day streak</Text>
+              </View>
+              <View style={headerSt.streakBadge}>
+                <View style={headerSt.liveDot} />
+                <Text style={headerSt.streakText}>Updated now</Text>
+              </View>
+            </View>
+          </Animated.View>
 
-          {/* 7-Day Timeline */}
-          <View style={styles.timeline}>
-            {DAYS.map((day, idx) => {
-              const template = dayMap[day];
-              const isToday = day === today;
-              const workoutName = template ? parseWorkoutNameFromTemplate(template) : null;
-
-              if (!template) {
-                return (
-                  <Animated.View
-                    key={day}
-                    entering={FadeInDown.delay(idx * 40).springify()}
-                    style={[styles.dayRow, isToday && styles.dayRowToday]}
-                  >
-                    <View style={styles.dayLabelCol}>
-                      <Text style={[styles.dayAbbr, isToday && styles.dayAbbrToday]}>
-                        {day.slice(0, 3).toUpperCase()}
-                      </Text>
-                      {isToday && <View style={styles.todayDot} />}
-                    </View>
-                    <View style={styles.restCard}>
-                      <View style={styles.restIconBox}>
-                        <MaterialCommunityIcons name="sleep" size={16} color={theme.colors.text.muted} />
-                      </View>
-                      <Text style={styles.restLabel}>Rest & Recovery</Text>
-                    </View>
-                  </Animated.View>
-                );
-              }
-
-              return (
-                <Animated.View
-                  key={day}
-                  entering={FadeInDown.delay(idx * 40).springify()}
-                  style={[styles.dayRow, isToday && styles.dayRowToday]}
-                >
-                  {/* Day Label */}
-                  <View style={styles.dayLabelCol}>
-                    <Text style={[styles.dayAbbr, isToday && styles.dayAbbrToday]}>
-                      {day.slice(0, 3).toUpperCase()}
-                    </Text>
-                    {isToday && <View style={styles.todayDot} />}
-                  </View>
-
-                  {/* Workout Card */}
-                  <View style={[styles.workoutCard, isToday && styles.workoutCardToday]}>
-                    <View style={styles.cardTop}>
-                      <View style={styles.cardIconBox}>
-                        <MaterialCommunityIcons name="dumbbell" size={18} color={theme.colors.accent.primary} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.cardTitle} numberOfLines={1}>{workoutName}</Text>
-                        <Text style={styles.cardDayLabel}>{day}</Text>
-                      </View>
-                      {isToday && (
-                        <View style={styles.todayBadge}>
-                          <Text style={styles.todayBadgeText}>TODAY</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    {isToday && (
-                      <View style={styles.cardActions}>
-                        <TouchableOpacity
-                          style={styles.startBtn}
-                          onPress={() => router.push({
-                            pathname: '/modals/active-workout',
-                            params: { templateId: template.id }
-                          })}
-                          activeOpacity={0.8}
-                        >
-                          <Feather name="play" size={13} color="white" />
-                          <Text style={styles.startBtnText}>Start</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
-                </Animated.View>
-              );
-            })}
+          {/* ═══════════════ INSIGHTS DASHBOARD ═══════════════ */}
+          <View style={gridSt.container}>
+            <View style={gridSt.row}>
+              <MetricCard
+                label="Today's Calories"
+                value={todayCalories != null ? `${Math.round(todayCalories)}` : '—'}
+                sublabel={todayCalories != null && calGoal ? `of ${calGoal} kcal goal` : 'Log a meal to start'}
+                accent={ORANGE}
+                icon="pie-chart"
+                trend={calTrendLabel || undefined}
+                delay={60}
+              />
+              <View style={{ width: GRID_GAP }} />
+              <MetricCard
+                label="Body Weight"
+                value={latestWeight ? `${weightUnit === 'lbs' ? (latestWeight * 2.20462).toFixed(1) : latestWeight.toFixed(1)}` : '—'}
+                sublabel={latestWeight ? weightUnit : 'Log your weight'}
+                accent={PURPLE}
+                icon="activity"
+                trend={weightTrendLabel || undefined}
+                delay={120}
+              />
+            </View>
+            <View style={{ height: GRID_GAP }} />
+            <View style={gridSt.row}>
+              <MetricCard
+                label="Exercises Tracked"
+                value={`${exercises.length}`}
+                sublabel={exercises.length > 0 ? `${exercises.reduce((s, e) => s + e.count, 0)} total entries` : 'No data yet'}
+                icon="activity"
+                delay={180}
+              />
+              <View style={{ width: GRID_GAP }} />
+              <MetricCard
+                label="Avg. Daily Calories"
+                value={calStats?.avg ? `${calStats.avg}` : '—'}
+                sublabel={calStats?.avg ? 'kcal / day' : 'Track to see'}
+                icon="bar-chart-2"
+                delay={240}
+              />
+            </View>
           </View>
 
-          {/* Loose / Unscheduled Templates */}
-          {looseTemplates.length > 0 && (
-            <View style={styles.looseSection}>
-              <Text style={styles.looseSectionTitle}>Unscheduled Workouts</Text>
-              {looseTemplates.map((template, idx) => (
-                <Animated.View
-                  key={template.id}
-                  entering={FadeInRight.delay(idx * 60).springify()}
-                  style={styles.looseCard}
-                >
-                  <View style={styles.cardIconBox}>
-                    <MaterialCommunityIcons name="dumbbell" size={18} color={theme.colors.accent.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cardTitle} numberOfLines={1}>{template.name}</Text>
-                  </View>
-                  <View style={styles.cardActions}>
-                    <TouchableOpacity
-                      style={styles.startBtn}
-                      onPress={() => router.push({
-                        pathname: '/modals/active-workout',
-                        params: { templateId: template.id }
-                      })}
-                      activeOpacity={0.8}
-                    >
-                      <Feather name="play" size={13} color="white" />
-                      <Text style={styles.startBtnText}>Start</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={() => setDeleteTarget({ id: template.id, name: template.name })}
-                      activeOpacity={0.8}
-                    >
-                      <Feather name="trash-2" size={13} color="#EF4444" />
-                    </TouchableOpacity>
-                  </View>
-                </Animated.View>
-              ))}
-            </View>
-          )}
-
-          {/* Empty State */}
-          {templates.length === 0 && (
-            <Animated.View entering={FadeIn.delay(200)} style={styles.emptyState}>
-              <View style={styles.emptyIconBox}>
-                <MaterialCommunityIcons name="dumbbell" size={40} color={theme.colors.accent.secondary} />
+          {/* ═══════════════ CALORIES SECTION ═══════════════ */}
+          <Animated.View entering={FadeInDown.delay(100).duration(400)}>
+            <AnalyticsSectionHeader
+              title="Calories"
+              value={todayCalories != null ? `${Math.round(todayCalories)} today` : 'No data'}
+              trend={calTrendLabel || undefined}
+              icon="🔥"
+            />
+            <View style={cardSt.wrapper}>
+              <View style={cardSt.filterRow}>
+                <FilterRow options={calFilterOptions} selected={calRange} onSelect={(k) => setCalRange(k as typeof calRange)} compact />
               </View>
-              <Text style={styles.emptyTitle}>No Workouts Yet</Text>
-              <Text style={styles.emptySubtitle}>
-                Design your training week by tapping the + button above.
-              </Text>
-              <TouchableOpacity
-                style={styles.emptyActionBtn}
-                onPress={() => router.push('/workout/builder')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.emptyActionText}>Build My Split</Text>
-              </TouchableOpacity>
-            </Animated.View>
-          )}
+
+              {calLoading && calorieData.length === 0 ? (
+                <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
+                </View>
+              ) : calorieData.length === 0 ? (
+                <AnalyticsEmptyState
+                  title="No calorie data yet"
+                  subtitle="Start tracking your meals in the Nutrition tab"
+                  actionLabel="Go to Nutrition"
+                  onAction={() => router.push('/(tabs)/food')}
+                  icon="pie-chart"
+                />
+              ) : (
+                <>
+                  <View style={cardSt.chartArea}>
+                    <TooltipBox
+                      title={calTooltip?.point.date ? formatDateFull(calTooltip.point.date) : ''}
+                      lines={calTooltip ? [
+                        `${Math.round(calTooltip.point.calories)} kcal`,
+                        `P: ${Math.round(calTooltip.point.protein)}g · C: ${Math.round(calTooltip.point.carbs)}g · F: ${Math.round(calTooltip.point.fat)}g`,
+                      ] : []}
+                      x={calTooltip?.x ?? 0}
+                      visible={!!calTooltip}
+                    />
+                    <BarChartPremium
+                      data={chartCalData}
+                      color={ORANGE}
+                      goalLine={calGoal || undefined}
+                      onBarTap={(p, i) => {
+                        const meta = p.meta as CalorieDataPoint;
+                        if (meta.calories === 0) return;
+                        const screenX = (i / Math.max(chartCalData.length - 1, 1)) * CHART_W + 20;
+                        setCalTooltip({ point: meta, x: screenX });
+                        setCalActiveIdx(i);
+                      }}
+                      highlightIndex={calActiveIdx ?? undefined}
+                    />
+                  </View>
+                  <View style={cardSt.statsRow}>
+                    <StatChip label="Avg / day" value={calStats ? `${calStats.avg}` : '—'} />
+                    <StatChip label="Highest" value={calStats ? `${calStats.highest}` : '—'} />
+                    <StatChip label="Goal" value={calGoal ? `${calGoal}` : 'Not set'} accent={calGoal ? PURPLE : undefined} />
+                  </View>
+                </>
+              )}
+            </View>
+          </Animated.View>
+
+          {/* ═══════════════ BODY WEIGHT SECTION ═══════════════ */}
+          <Animated.View entering={FadeInDown.delay(180).duration(400)}>
+            <AnalyticsSectionHeader
+              title="Body Weight"
+              value={latestWeight ? `${weightUnit === 'lbs' ? (latestWeight * 2.20462).toFixed(1) : latestWeight.toFixed(1)} ${weightUnit}` : 'No data'}
+              trend={weightTrendLabel || undefined}
+              icon="⚖️"
+            />
+            <View style={cardSt.wrapper}>
+              <View style={cardSt.filterRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <FilterRow options={weightFilterOptions} selected={weightRange} onSelect={(k) => setWeightRange(k as typeof weightRange)} compact />
+                </View>
+                <View style={unitToggleSt.wrapper}>
+                  {(['kg', 'lbs'] as const).map(u => (
+                    <TouchableOpacity
+                      key={u}
+                      onPress={() => setWeightUnit(u)}
+                      style={[unitToggleSt.pill, weightUnit === u && unitToggleSt.activePill]}
+                    >
+                      <Text style={[unitToggleSt.text, weightUnit === u && unitToggleSt.activeText]}>{u}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {weightLoading && weightData.length === 0 ? (
+                <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
+                </View>
+              ) : weightData.length < 2 ? (
+                <AnalyticsEmptyState
+                  title="Not enough data"
+                  subtitle="Log your weight daily to see your trend over time"
+                  actionLabel="Log Today's Weight"
+                  onAction={() => setShowWeightSheet(true)}
+                  icon="activity"
+                />
+              ) : (
+                <>
+                  <View style={cardSt.chartArea}>
+                    <TooltipBox
+                      title={weightTooltip?.point.date ? formatDateFull(weightTooltip.point.date) : ''}
+                      lines={weightTooltip ? (() => {
+                        const idx = weightData.findIndex(d => d.date === weightTooltip.point.date);
+                        const prev = idx > 0 ? weightData[idx - 1] : null;
+                        const change = prev ? (weightTooltip.point.weight - prev.weight) : 0;
+                        return [
+                          `${weightUnit === 'lbs' ? (weightTooltip.point.weight * 2.20462).toFixed(1) : weightTooltip.point.weight.toFixed(1)} ${weightUnit}`,
+                          `Change: ${change >= 0 ? '+' : ''}${change.toFixed(1)} ${weightUnit}`,
+                        ];
+                      })() : []}
+                      x={weightTooltip?.x ?? 0}
+                      visible={!!weightTooltip}
+                    />
+                    <AreaChartPremium
+                      data={chartWeightData}
+                      color={PURPLE}
+                      onPointTap={(p, i) => {
+                        const screenX = (i / Math.max(chartWeightData.length - 1, 1)) * CHART_W + 30;
+                        const meta = p.meta as WeightDataPoint;
+                        setWeightTooltip({ point: meta, x: screenX });
+                        setWeightActiveIdx(i);
+                      }}
+                      activePoint={weightActiveIdx ?? undefined}
+                    />
+                  </View>
+                  {weightStats && (
+                    <View style={cardSt.statsRow}>
+                      <StatChip label={`Start · ${formatDate(weightStats.startDate)}`} value={`${weightStats.start}`} />
+                      <StatChip label={`Current · ${formatDate(weightStats.currentDate)}`} value={`${weightStats.current}`} />
+                      <StatChip
+                        label="Change"
+                        value={`${weightStats.change >= 0 ? '+' : ''}${weightStats.change}`}
+                        accent={weightStats.change === 0 ? undefined : (isLossGoal ? (weightStats.change < 0 ? GREEN : RED) : (weightStats.change > 0 ? GREEN : RED))}
+                      />
+                    </View>
+                  )}
+                  <TouchableOpacity style={logWeightSt.btn} onPress={() => setShowWeightSheet(true)} activeOpacity={0.8}>
+                    <LinearGradient colors={['rgba(106,73,250,0.12)', 'rgba(106,73,250,0.04)']} style={logWeightSt.grad}>
+                      <Feather name="plus" size={15} color={PURPLE} />
+                      <Text style={logWeightSt.text}>Log Today's Weight</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </Animated.View>
+
+          {/* ═══════════════ WORKOUT PROGRESS SECTION ═══════════════ */}
+          <Animated.View entering={FadeInDown.delay(260).duration(400)}>
+            <AnalyticsSectionHeader
+              title="Workout Progress"
+              value={`${exercises.length} exercises`}
+              icon="💪"
+            />
+            <View style={cardSt.wrapper}>
+              {exercises.length === 0 ? (
+                <AnalyticsEmptyState
+                  title="No workout data yet"
+                  subtitle="Complete your first workout to see exercise progress"
+                  actionLabel="Start Workout"
+                  onAction={() => router.push('/(tabs)/train')}
+                  icon="zap"
+                />
+              ) : (
+                <>
+                  {/* Exercise chips */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                    <View style={{ flexDirection: 'row', gap: 6, paddingVertical: 2 }}>
+                      {exercises.map(ex => (
+                        <TouchableOpacity
+                          key={ex.id}
+                          onPress={() => setSelectedEx(ex.id)}
+                          style={[chipSt.base, selectedEx === ex.id && chipSt.active]}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[chipSt.text, selectedEx === ex.id && chipSt.activeText]}>
+                            {ex.name}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </ScrollView>
+
+                  {/* Filter */}
+                  <View style={cardSt.filterRow}>
+                    <FilterRow options={workoutFilterOptions} selected={workoutRange} onSelect={(k) => setWorkoutRange(k as typeof workoutRange)} compact />
+                  </View>
+
+                  {workoutLoading && workoutData.length === 0 ? (
+                    <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
+                    </View>
+                  ) : workoutData.length < 2 ? (
+                    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 13, color: MUTED, textAlign: 'center' }}>
+                        Not enough data yet. Complete more sessions to see {selectedExName} progress.
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={cardSt.chartArea}>
+                        <TooltipBox
+                          title={workoutTooltip?.point.date ? formatDateFull(workoutTooltip.point.date) : ''}
+                          lines={workoutTooltip ? [
+                            `Max: ${workoutTooltip.point.max_weight} kg`,
+                            `Sets: ${workoutTooltip.point.sets} · Reps: ${workoutTooltip.point.max_reps}`,
+                          ] : []}
+                          x={workoutTooltip?.x ?? 0}
+                          visible={!!workoutTooltip}
+                        />
+                        <LineChartPremium
+                          data={chartWorkoutData}
+                          color={PURPLE}
+                          onPointTap={(p, i) => {
+                            const screenX = (i / Math.max(chartWorkoutData.length - 1, 1)) * CHART_W + 30;
+                            const meta = p.meta as WorkoutDataPoint;
+                            setWorkoutTooltip({ point: meta, x: screenX });
+                            setWorkoutActiveIdx(i);
+                          }}
+                          activePoint={workoutActiveIdx ?? undefined}
+                        />
+                      </View>
+                      <View style={cardSt.statsRow}>
+                        <StatChip
+                          label={`Personal Best${pb ? ` · ${formatDate(pb.date)}` : ''}`}
+                          value={pb ? `${pb.max_weight} kg` : '—'}
+                        />
+                        <StatChip
+                          label={`Last Session${lastSession ? ` · ${formatDate(lastSession.date)}` : ''}`}
+                          value={lastSession ? `${lastSession.max_weight} kg` : '—'}
+                        />
+                      </View>
+                    </>
+                  )}
+                </>
+              )}
+            </View>
+          </Animated.View>
 
           <View style={{ height: 100 }} />
         </ScrollView>
-      ) : (
-        <View style={styles.scroll}>
-          {user?.id && <ProgressTab userId={user.id} />}
-        </View>
-      )}
+      </SafeAreaView>
 
-      {/* Delete Confirmation Modal */}
-      <DeleteModal
-        visible={!!deleteTarget}
-        onCancel={() => setDeleteTarget(null)}
-        onConfirm={handleDelete}
-        workoutName={deleteTarget?.name || ''}
-        loading={deleting}
-      />
-    </SafeAreaView>
+      {/* ── Log Weight Modal ── */}
+      <Modal visible={showWeightSheet} transparent animationType="slide">
+        <TouchableOpacity
+          style={modalSt.backdrop}
+          activeOpacity={1}
+          onPress={() => setShowWeightSheet(false)}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={modalSt.sheet}>
+            <View style={modalSt.handle} />
+            <Text style={modalSt.title}>Log Today's Weight</Text>
+
+            <View style={modalSt.inputRow}>
+              <TextInput
+                style={modalSt.input}
+                placeholder="0.0"
+                placeholderTextColor="#C7C7CC"
+                keyboardType="decimal-pad"
+                value={weightInput}
+                onChangeText={setWeightInput}
+                autoFocus
+              />
+              <Text style={modalSt.unit}>{weightUnit}</Text>
+            </View>
+
+            <Text style={modalSt.date}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            </Text>
+
+            <TouchableOpacity
+              style={[modalSt.saveBtn, (!weightInput || isNaN(parseFloat(weightInput))) && modalSt.saveBtnDisabled]}
+              onPress={handleSaveWeight}
+              disabled={!weightInput || isNaN(parseFloat(weightInput))}
+              activeOpacity={0.8}
+            >
+              <LinearGradient colors={[PURPLE, '#5A3DE0']} style={modalSt.saveGrad}>
+                <Text style={modalSt.saveText}>Save Weight</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+    </View>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════════════════════
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: theme.colors.bg.primary },
+const rootSt = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: BG },
+  safe: { flex: 1 },
+  scrollContent: { paddingBottom: 100, paddingTop: 12 },
+});
 
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 8,
-    paddingBottom: 12,
+// ── Header ──
+const headerSt = StyleSheet.create({
+  wrapper: { paddingHorizontal: 20, marginBottom: 16 },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  left: {},
+  title: { fontSize: 30, fontWeight: '800', color: PRIMARY, letterSpacing: -0.5 },
+  subtitle: { fontSize: 14, fontWeight: '500', color: MUTED, marginTop: 2 },
+  syncBtn: {
+    width: 38, height: 38, borderRadius: 12,
+    backgroundColor: PURPLE_GLOW, alignItems: 'center', justifyContent: 'center',
   },
-  title: {
-    fontSize: 28,
-    fontFamily: theme.font.family.heading,
-    color: theme.colors.text.primary,
-    letterSpacing: -0.5,
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
+  streakBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: '#FFFFFF', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 4, elevation: 1,
   },
-  subtitle: {
-    fontSize: 13,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    marginTop: 2,
-  },
-  plusBtn: {
-    width: 46,
-    height: 46,
-    borderRadius: 15,
-    backgroundColor: theme.colors.accent.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...theme.shadow.premium,
-  },
+  streakText: { fontSize: 11, fontWeight: '600', color: MUTED },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: GREEN },
+});
 
-  searchRow: {
-    paddingHorizontal: 24,
-    marginBottom: 12,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'white',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    height: 48,
-    gap: 10,
-    ...theme.shadow.soft,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.primary,
-  },
+// ── Insights Grid ──
+const gridSt = StyleSheet.create({
+  container: { paddingHorizontal: 16, marginBottom: 8 },
+  row: { flexDirection: 'row' },
+});
 
-  tabs: {
-    flexDirection: 'row',
-    backgroundColor: '#EDE9FE',
-    marginHorizontal: 24,
-    borderRadius: 14,
-    padding: 4,
-    marginBottom: 16,
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 9,
-    borderRadius: 11,
-  },
-  activeTab: {
-    backgroundColor: 'white',
-    ...theme.shadow.soft,
-  },
-  tabText: {
-    fontSize: 13,
-    fontFamily: theme.font.family.semibold,
-    color: theme.colors.text.muted,
-  },
-  activeTabText: {
-    color: theme.colors.accent.primary,
-  },
-
-  scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 24, paddingTop: 4 },
-
-  // Edit Split button
-  editSplitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: theme.colors.accent.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 100,
-    marginBottom: 16,
-    ...theme.shadow.premium,
-  },
-  editSplitBtnText: {
-    fontSize: 15,
-    fontFamily: theme.font.family.bold,
-    color: 'white',
-  },
-
-  // ── Timeline ──
-  timeline: { gap: 10 },
-
-  dayRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 2,
-  },
-  dayRowToday: {},
-
-  dayLabelCol: {
-    width: 36,
-    alignItems: 'center',
-    gap: 4,
-  },
-  dayAbbr: {
-    fontSize: 11,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.text.muted,
-    letterSpacing: 0.5,
-  },
-  dayAbbrToday: {
-    color: theme.colors.accent.primary,
-  },
-  todayDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: theme.colors.accent.primary,
-  },
-
-  // Rest card
-  restCard: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'white',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    opacity: 0.65,
-  },
-  restIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  restLabel: {
-    fontSize: 13,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    fontStyle: 'italic',
-  },
-
-  // Workout card
-  workoutCard: {
-    flex: 1,
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 14,
-    ...theme.shadow.card,
-  },
-  workoutCardToday: {
-    borderWidth: 1.5,
-    borderColor: theme.colors.accent.primary,
-  },
-  cardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-  },
-  cardIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#EDE9FE',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.text.primary,
-    marginBottom: 1,
-  },
-  cardDayLabel: {
-    fontSize: 11,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-  },
-  todayBadge: {
-    backgroundColor: '#EDE9FE',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  todayBadgeText: {
-    fontSize: 9,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.accent.primary,
-    letterSpacing: 0.8,
-  },
-
-  // Action buttons
-  cardActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  startBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: theme.colors.accent.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
-  },
-  startBtnText: {
-    fontSize: 12,
-    fontFamily: theme.font.family.bold,
-    color: 'white',
-  },
-  editBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#EDE9FE',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-  },
-  editBtnText: {
-    fontSize: 12,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.accent.primary,
-  },
-  deleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-  },
-  deleteBtnText: {
-    fontSize: 12,
-    fontFamily: theme.font.family.bold,
-    color: '#EF4444',
-  },
-
-  // Loose templates
-  looseSection: { marginTop: 28 },
-  looseSectionTitle: {
-    fontSize: 16,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.text.primary,
-    marginBottom: 12,
-  },
-  looseCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'white',
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 10,
-    ...theme.shadow.card,
-  },
-
-  // Empty state
-  emptyState: {
-    alignItems: 'center',
-    paddingTop: 60,
-    paddingHorizontal: 32,
-    gap: 12,
-  },
-  emptyIconBox: {
-    width: 80,
-    height: 80,
-    borderRadius: 28,
-    backgroundColor: '#EDE9FE',
-    alignItems: 'center',
-    justifyContent: 'center',
+// ── Card ──
+const cardSt = StyleSheet.create({
+  wrapper: {
+    backgroundColor: CARD_BG, borderRadius: CARD_RADIUS, marginHorizontal: 16,
+    padding: 16, paddingTop: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 12, elevation: 2,
     marginBottom: 8,
   },
-  emptyTitle: {
-    fontSize: 20,
-    fontFamily: theme.font.family.heading,
-    color: theme.colors.text.primary,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    textAlign: 'center',
-    lineHeight: 21,
-  },
-  emptyActionBtn: {
-    backgroundColor: theme.colors.accent.primary,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    borderRadius: 16,
-    marginTop: 8,
-    ...theme.shadow.premium,
-  },
-  emptyActionText: {
-    fontSize: 15,
-    fontFamily: theme.font.family.bold,
-    color: 'white',
-  },
+  filterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  chartArea: { position: 'relative', marginBottom: 12 },
+  statsRow: { flexDirection: 'row', gap: 8 },
+});
 
-  // ── Delete Modal ──
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
+// ── Exercise Chips ──
+const chipSt = StyleSheet.create({
+  base: {
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 12,
+    backgroundColor: '#F0EFF5',
   },
-  deleteModal: {
-    backgroundColor: 'white',
-    borderRadius: 28,
-    padding: 28,
-    width: '100%',
-    alignItems: 'center',
-    gap: 8,
-    ...theme.shadow.premium,
-  },
-  deleteIconBox: {
-    width: 60,
-    height: 60,
-    borderRadius: 20,
-    backgroundColor: '#FEF2F2',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  deleteTitle: {
-    fontSize: 20,
-    fontFamily: theme.font.family.heading,
-    color: theme.colors.text.primary,
-    marginBottom: 4,
-  },
-  deleteSubtitle: {
-    fontSize: 14,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.secondary,
-    textAlign: 'center',
-    lineHeight: 21,
-    marginBottom: 8,
-  },
-  deleteActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-    width: '100%',
-  },
-  cancelBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 16,
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-  },
-  cancelBtnText: {
-    fontSize: 15,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.text.secondary,
-  },
-  confirmDeleteBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 16,
-    backgroundColor: '#EF4444',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  confirmDeleteText: {
-    fontSize: 15,
-    fontFamily: theme.font.family.bold,
-    color: 'white',
-  },
+  active: { backgroundColor: PURPLE },
+  text: { fontSize: 12, fontWeight: '600', color: MUTED },
+  activeText: { color: '#FFFFFF' },
+});
 
-  // ── Progress Tab ──
-  progressLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+// ── Unit Toggle ──
+const unitToggleSt = StyleSheet.create({
+  wrapper: { flexDirection: 'row', backgroundColor: '#F0EFF5', borderRadius: 8, padding: 2 },
+  pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  activePill: { backgroundColor: '#FFFFFF' },
+  text: { fontSize: 11, fontWeight: '600', color: MUTED },
+  activeText: { color: PURPLE },
+});
 
-  statsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingHorizontal: 24,
-    paddingTop: 8,
-    marginBottom: 20,
+// ── Log Weight ──
+const logWeightSt = StyleSheet.create({
+  btn: { borderRadius: 14, overflow: 'hidden', marginTop: 12 },
+  grad: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 12, borderRadius: 14, borderWidth: 1.5, borderColor: PURPLE_GLOW,
   },
-  statCard: {
-    flex: 1,
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 14,
-    alignItems: 'center',
-    gap: 6,
-    ...theme.shadow.card,
-  },
-  statIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statValue: {
-    fontSize: 22,
-    fontFamily: theme.font.family.heading,
-    color: theme.colors.text.primary,
-  },
-  statLabel: {
-    fontSize: 10,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    textAlign: 'center',
-  },
+  text: { fontSize: 14, fontWeight: '700', color: PURPLE },
+});
 
-  weeklyChart: {
-    backgroundColor: 'white',
-    marginHorizontal: 24,
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 24,
-    ...theme.shadow.card,
+// ── Modal ──
+const modalSt = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: CARD_BG, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: 24, paddingBottom: Platform.OS === 'ios' ? 44 : 24, paddingTop: 12,
   },
-  chartTitle: {
-    fontSize: 15,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.text.primary,
-    marginBottom: 16,
+  handle: { width: 36, height: 4, backgroundColor: '#E5E5EA', borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
+  title: { fontSize: 20, fontWeight: '800', color: PRIMARY, textAlign: 'center', marginBottom: 24 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8 },
+  input: {
+    fontSize: 40, fontWeight: '800', color: PRIMARY, textAlign: 'center',
+    borderBottomWidth: 2, borderBottomColor: PURPLE, minWidth: 120, paddingVertical: 4,
   },
-  barsRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    height: 80,
-  },
-  barGroup: {
-    alignItems: 'center',
-    gap: 6,
-    flex: 1,
-  },
-  bar: {
-    width: 10,
-    borderRadius: 5,
-    backgroundColor: '#E5E7EB',
-  },
-  barActive: {
-    backgroundColor: '#C4B5FD',
-  },
-  barToday: {
-    backgroundColor: theme.colors.accent.primary,
-    width: 12,
-  },
-  barLabel: {
-    fontSize: 11,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.text.muted,
-  },
-  barLabelToday: {
-    color: theme.colors.accent.primary,
-  },
-
-  sectionHeader: {
-    fontSize: 16,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.text.primary,
-    paddingHorizontal: 24,
-    marginBottom: 12,
-  },
-  sessionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'white',
-    marginHorizontal: 24,
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 10,
-    ...theme.shadow.card,
-  },
-  sessionIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 11,
-    backgroundColor: '#EDE9FE',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sessionName: {
-    fontSize: 14,
-    fontFamily: theme.font.family.bold,
-    color: theme.colors.text.primary,
-    marginBottom: 2,
-  },
-  sessionDate: {
-    fontSize: 11,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-  },
-  sessionBadge: {
-    backgroundColor: '#D1FAE5',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  sessionBadgeText: {
-    fontSize: 11,
-    fontFamily: theme.font.family.bold,
-    color: '#10B981',
-  },
-  emptyProgress: {
-    alignItems: 'center',
-    paddingTop: 40,
-    gap: 12,
-    paddingHorizontal: 24,
-  },
-  emptyProgressText: {
-    fontSize: 14,
-    fontFamily: theme.font.family.medium,
-    color: theme.colors.text.muted,
-    textAlign: 'center',
-  },
+  unit: { fontSize: 20, fontWeight: '600', color: MUTED },
+  date: { fontSize: 13, color: MUTED, textAlign: 'center', marginBottom: 28 },
+  saveBtn: { borderRadius: 16, overflow: 'hidden' },
+  saveBtnDisabled: { opacity: 0.5 },
+  saveGrad: { paddingVertical: 16, alignItems: 'center', borderRadius: 16 },
+  saveText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
 });

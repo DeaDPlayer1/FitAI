@@ -6,6 +6,7 @@ import { Feather } from '@expo/vector-icons';
 
 import Card from '@/components/ui/Card';
 import { useUserStore } from '@/store/userStore';
+import { useModeStore } from '@/store/modeStore';
 import { signOutUser } from '@/lib/auth';
 import { theme } from '@/constants/theme';
 
@@ -53,6 +54,7 @@ const SettingRow = ({
 export default function SettingsScreen() {
   const router = useRouter();
   const { user } = useUserStore();
+  const appMode = useModeStore((s) => s.appMode);
 
   const handleSignOut = async () => {
     Alert.alert('Sign Out', 'Are you sure you want to log out?', [
@@ -63,7 +65,7 @@ export default function SettingsScreen() {
         onPress: async () => {
           try {
             await signOutUser();
-            router.replace('/(auth)/login');
+            router.replace('/splash');
           } catch (e: any) {
             Alert.alert('Error', e.message);
           }
@@ -96,6 +98,14 @@ export default function SettingsScreen() {
           <SettingRow 
             icon="lock" 
             title="Privacy & Security" 
+          />
+          <SettingRow 
+            icon="droplet" 
+            title="Daily Water Goal" 
+            value={`${user?.goals?.water || 8} glasses`}
+            iconBg="rgba(96, 165, 250, 0.1)"
+            iconColor="#60A5FA"
+            onPress={() => router.push('/modals/edit-settings')}
             isLast={true}
           />
         </Card>
@@ -147,22 +157,14 @@ export default function SettingsScreen() {
             icon="mic" 
             title="Voice Feedback" 
             value="Enabled during workouts"
-            isLast={true}
-          />
-        </Card>
-
-        {/* Preferences */}
-        <Text style={styles.groupLabel}>PREFERENCES</Text>
-        <Card style={styles.settingsCard} padding={0}>
-          <SettingRow 
-            icon="bell" 
-            title="Notifications" 
-            value="All enabled" 
           />
           <SettingRow 
-            icon="moon" 
-            title="Dark Mode" 
-            value="System default" 
+            icon="zap" 
+            title="App Mode" 
+            value={appMode === 'ai_trainer' ? 'AI Trainer' : 'Normal'}
+            iconBg="rgba(200,255,0,0.1)"
+            iconColor="#C8FF00"
+            onPress={() => router.push('/settings/mode-switcher')}
             isLast={true}
           />
         </Card>

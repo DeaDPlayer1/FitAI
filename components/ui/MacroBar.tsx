@@ -1,80 +1,97 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
-import { theme } from '../../constants/theme';
+/**
+ * MacroBar — Tinted progress bar for a single macro (protein/carbs/fat).
+ */
+import React, { useEffect } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay } from 'react-native-reanimated';
+import { theme } from '@/constants/theme';
 
 interface MacroBarProps {
   label: string;
-  value: string;
-  percentage: number;
+  value: number;
+  target: number;
   color: string;
+  unit?: string;
+  delay?: number;
+  showValue?: boolean;
 }
 
-export const MacroBar: React.FC<MacroBarProps> = ({ label, value, percentage, color }) => {
-  const animatedWidth = useRef(new Animated.Value(0)).current;
+export function MacroBar({ label, value, target, color, unit = 'g', delay = 0, showValue = true }: MacroBarProps) {
+  const progress = useSharedValue(0);
+  const pct = target > 0 ? Math.max(0, Math.min(value / target, 1)) : 0;
 
   useEffect(() => {
-    Animated.spring(animatedWidth, {
-      toValue: Math.min(Math.max(percentage, 0), 100),
-      useNativeDriver: false,
-      friction: 8,
-      tension: 40,
-    }).start();
-  }, [percentage]);
+    progress.value = withDelay(delay, withTiming(pct, { duration: 900 }));
+  }, [pct, delay, progress]);
+
+  const fillStyle = useAnimatedStyle(() => ({
+    width: `${progress.value * 100}%`,
+  }));
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.label}>{label}</Text>
-        <Text style={styles.value}>{value}</Text>
+      <View style={styles.row}>
+        <View style={styles.labelRow}>
+          <View style={[styles.dot, { backgroundColor: color }]} />
+          <Text style={styles.label}>{label}</Text>
+        </View>
+        {showValue && (
+          <Text style={styles.value}>
+            {Math.round(value)}<Text style={styles.target}>/{Math.round(target)}{unit}</Text>
+          </Text>
+        )}
       </View>
       <View style={styles.track}>
-        <Animated.View 
-          style={[
-            styles.bar, 
-            { 
-              backgroundColor: color,
-              width: animatedWidth.interpolate({
-                inputRange: [0, 100],
-                outputRange: ['0%', '100%']
-              })
-            }
-          ]} 
-        />
+        <Animated.View style={[styles.fill, { backgroundColor: color }, fillStyle]} />
       </View>
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
-    width: '100%',
-    marginBottom: theme.SPACING.md,
+    gap: 6,
   },
-  header: {
+  row: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: theme.SPACING.xs,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   label: {
-    fontSize: theme.FONT_SIZE.xs,
-    color: theme.colors.text.secondary,
-    fontFamily: theme.family.heading,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: theme.font.size.body,
+    fontWeight: '500',
+    color: theme.colors.text.primary,
   },
   value: {
-    fontSize: theme.FONT_SIZE.sm,
+    fontSize: theme.font.size.caption,
+    fontWeight: '600',
     color: theme.colors.text.primary,
-    fontFamily: theme.family.number,
+    fontVariant: ['tabular-nums'],
+  },
+  target: {
+    color: theme.colors.text.secondary,
+    fontWeight: '500',
   },
   track: {
-    height: 8,
-    backgroundColor: theme.BACKGROUND.input,
-    borderRadius: theme.RADIUS.pill,
+    height: 6,
+    backgroundColor: '#F0EEFC',
+    borderRadius: 3,
     overflow: 'hidden',
   },
-  bar: {
+  fill: {
     height: '100%',
-    borderRadius: theme.RADIUS.pill,
+    borderRadius: 3,
   },
 });
+
+export default MacroBar;

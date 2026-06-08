@@ -56,19 +56,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     borderRadius: theme.radius.lg,
-    backgroundColor: theme.colors.card.elevated,
-    shadowColor: theme.colors.shadow.color,
-    shadowOffset: theme.colors.shadow.offset,
-    shadowOpacity: theme.colors.shadow.opacity,
-    shadowRadius: theme.colors.shadow.radius,
-    elevation: theme.colors.shadow.elevation,
+    backgroundColor: theme.colors.bg.elevated,
+    shadowColor: theme.shadow.card.shadowColor,
+    shadowOffset: theme.shadow.card.shadowOffset,
+    shadowOpacity: theme.shadow.card.shadowOpacity,
+    shadowRadius: theme.shadow.card.shadowRadius,
+    elevation: theme.shadow.card.elevation,
   },
   glowWrapper: {
     borderRadius: theme.radius.lg,
     padding: 1, // Glow acts as a 1px border
   },
   content: {
-    backgroundColor: theme.colors.card.elevated,
+    backgroundColor: theme.colors.bg.elevated,
     borderRadius: theme.radius.lg - 1, // Adjust for 1px padding
     padding: theme.spacing.lg,
   },
@@ -96,7 +96,7 @@ const styles = StyleSheet.create({
   },
   value: {
     color: theme.text.primary,
-    fontSize: theme.font.xxl,
+    fontSize: theme.font.size.xxl,
     fontWeight: '700',
   },
   unit: {

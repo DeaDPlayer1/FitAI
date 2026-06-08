@@ -8,6 +8,7 @@ import Card from '@/components/ui/Card';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
 import { useUserStore } from '@/store/userStore';
+import { useTabBarStore } from '@/store/tabBarStore';
 import { supabase } from '@/lib/supabase';
 import { COLORS, FONT_SIZE, SPACING } from '@/constants/theme';
 
@@ -42,7 +43,8 @@ export default function LogWeightModal() {
       if (__DEV__) console.log('[log-weight] insert raw result:', { data, error });
       if (error) throw error;
       Alert.alert('✅ Logged!', `Weight: ${weight} kg`);
-      router.back();
+      useTabBarStore.getState().setVisible(true);
+      router.replace('/(tabs)' as any);
     } catch (err: any) {
       Alert.alert('Error', err.message);
     } finally {

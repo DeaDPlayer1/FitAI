@@ -1,4 +1,4 @@
-import React, { memo, useRef } from 'react';
+import React, { memo, useRef, useCallback } from 'react';
 import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, Animated, View, ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
@@ -33,16 +33,46 @@ const PrimaryButtonComponent = ({
   style,
 }: PrimaryButtonProps) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  const opacityAnim = useRef(new Animated.Value(1)).current;
 
-  const onPressIn = () => Animated.spring(scaleAnim, { toValue: 0.96, useNativeDriver: true }).start();
-  const onPressOut = () => Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true }).start();
+  const onPressIn = useCallback(() => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: 0.96,
+        damping: 12,
+        stiffness: 200,
+        mass: 0.5,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: 0.85,
+        duration: 80,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  const onPressOut = useCallback(() => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        damping: 10,
+        stiffness: 120,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
 
   const isDisabled = disabled || loading;
   const dims = SIZE[size];
-  const wrapperStyle = [{ transform: [{ scale: scaleAnim }], width: fullWidth ? '100%' : undefined }, style];
 
   return (
-    <Animated.View style={wrapperStyle}>
+    <Animated.View style={[{ transform: [{ scale: scaleAnim }], opacity: opacityAnim, width: fullWidth ? '100%' : undefined }, style]}>
       <TouchableOpacity
         activeOpacity={1}
         onPress={onPress}
@@ -60,7 +90,7 @@ const PrimaryButtonComponent = ({
       >
         {(variant === 'orange' || variant === 'green') && !isDisabled ? (
           <LinearGradient
-            colors={variant === 'orange' ? theme.colors.gradient.orange : theme.colors.gradient.green}
+            colors={variant === 'orange' ? theme.colors.gradient.heroWarning : theme.colors.gradient.heroSuccess}
             style={[StyleSheet.absoluteFill, { borderRadius: dims.radius }]}
           />
         ) : null}
@@ -93,9 +123,9 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.danger,
     ...theme.shadow.orange,
   },
-  ghost: { 
-    backgroundColor: 'transparent', 
-    borderWidth: 1.5, 
+  ghost: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
     borderColor: theme.colors.accent.orange,
   },
   disabled: { opacity: 0.4, shadowOpacity: 0, elevation: 0, backgroundColor: theme.colors.border.soft },
