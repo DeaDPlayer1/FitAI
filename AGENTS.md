@@ -1,7 +1,7 @@
 # Pulse AI — Session Summary
 
 ## Goal
-- Fix navigation, key, and food-recognition errors; expand food database to 1000+ items; rebuild the nutrition scaling engine to properly handle serving sizes, units, and proportional macro calculation across camera, barcode, and text food logging.
+- Fix navigation, key, and food-recognition errors; expand food database to 1000+ items; rebuild the nutrition scaling engine; build complete MyFitnessPal-style manual food logging system.
 
 ## Constraints & Preferences
 - Use exact Indian dish names in AI prompts (not generic descriptions)
@@ -11,20 +11,29 @@
 - Groq text model: `llama-3.3-70b-versatile`
 - Nutrition model must use `scaleFactor = selectedAmount / baseServingAmount` (not gram-conversion fallbacks that cause exponential inflation)
 - Unit selector must be dynamic based on food type (liquids → ml/cans/bottles; solids → g/cups/bowls/pieces)
+- Nutrition values must come from verified databases, never AI hallucinations
 
 ## Progress
 ### Done
 - **GO_BACK navigation error**: `FloatingTabBar.tsx:58` changed `goBack()` → `navigate('index')`; `coach.tsx:409` changed `router.back()` → `router.navigate('/(ai-trainer)')`
 - **Duplicate key error**: `BarcodeResultScreen.tsx` changed `key={q.value}` → `key={q.label}`
 - **Food database expanded to 1001 items**: Batch 2 (+241), Batch 3 (+107), Batch 4 (+46), Batch 5 (+16), manual (+3) — all scripts in `scripts/`
-- **`lib/nutritionAI.ts` prompts rewritten for Indian cuisine**: `identifyFoodFromImage`, `calculateNutritionFromDescription`, DB cross-reference after vision, Layer 5 fallback with Indian-cuisine-aware values
-- **Camera → 1 Groq call (merged)**: Replaced 2-call pipeline (`identifyFoodFromImage` → `calculateNutritionFromDescription`) with single `analyzeImageSingleCall` returning structured JSON (per-100g values + detected portion size)
-- **Multi-food DB matching**: Each AI-detected item matched against `food_cache` via `lookupRawPer100g()`; cached per-100g values replace AI estimates
-- **Reference card/coin overlay**: Added credit card + coin outlines in `camera-capture.tsx` camera view as portion scale reference
-- **Image caching**: Added `food_scans` table in `db.ts`; `saveScanToCache()`/`getRecentScans()` in `nutritionAI.ts` persist scan URIs + food name + calories to SQLite
-- **On-device classifier removed from camera path**: Broken TF.js MobileNet model (`tf.loadGraphModel` fails with `"Cannot read property 'producer' of undefined"`) removed from camera analysis path — kept only for text fallback
-- **Nutrition scaling engine fix**: `lib/nutritionScale.ts`, `screens/FoodConfirmScreen.tsx` — complete overhaul to fix 455 kcal / 115.5g carbs bug (system now uses scaleFactor = selectedAmount / baseServingAmount, no double-inflation)
-- **Metro cache cleared**: `npx expo start --clear` resolved `lightningcss-darwin-x64` watch error
+- **`lib/nutritionAI.ts` rewritten**: Quality analysis, confidence system, 200+ canonical map, 100+ category averages, deterministic fallback (no AI macros)
+- **Camera → 1 Groq call (merged)**: Replaced 2-call pipeline with single `analyzeImageSingleCall`
+- **Nutrition scaling engine fix**: `lib/nutritionScale.ts` overhaul — fixed 455 kcal / 115.5g carbs bug
+- **Phase 6: Premium camera UX**: Animated pulsing frame, flash toggle, grid overlay, gallery picker, haptics, shutter animation
+- **Phase 7: Confidence badges**: Colored High/Medium/Low badges on FoodConfirmScreen, low-confidence warning banner
+- **Phase 8: Meal insights**: Daily goal progress bar, smart meal composition insight, meal emoji header
+- **Auth loading fix**: Eager `syncUserData()` on login (5s timeout), skip redundant profile fetch in `handleAuthChange`, removed boot artificial 1.8s delay
+- **Complete manual food logging system**:
+  - **Food database schema**: `foods`, `food_servings`, `user_custom_foods`, `saved_meals`, `saved_meal_foods`, `recent_foods` tables with FTS5 full-text search
+  - **Search engine**: `lib/foodSearch.ts` — FTS5 with LIKE fallback, autocomplete suggestions, recent/frequent ranking, serving size memory
+  - **Food Search screen**: `app/modals/food-search.tsx` — premium MFP-style search with auto-focus, debounced search (150ms), recent/frequent/saved meals sections, verified badges, barcode shortcut, Quick Add shortcut
+  - **Food Detail screen**: `app/modals/food-detail.tsx` — nutrition facts, serving selector (grams + presets), quantity editor, Quick Add mode (calories + macros), meal type selector, per-100g display
+  - **Quick Add**: Enter calories + optional macros for restaurant/unknown foods
+  - **Saved Meals**: Save/load/quick-log meal combos with totals
+  - **Recent/Frequent tracking**: Auto-tracked per user per meal type, meal-time-aware suggestions
+  - **Wired into app**: Search button in log-food tool row, search shortcut card on food tab
 
 ### In Progress
 - (none)
@@ -32,68 +41,58 @@
 ### Blocked
 - (none)
 
+## Food Search Architecture
+
+### Search Priority Ranking
+1. Exact prefix match
+2. FTS5 full-text match (aliases, search_terms, category)
+3. LIKE fallback on canonical_name, aliases, search_terms
+4. Suggestions derived from top results or alias matches
+
+### Search Flow
+```
+User types → 150ms debounce → searchFoods(text, userId, mealType)
+  → Check in-memory cache (5s TTL)
+  → FTS5 query (canonical_name* alias* search_terms*)
+  → Fallback: LIKE %query%
+  → Sort: exact prefix first, then rest
+  → Merge with recent foods (if query < 2 chars)
+  → Return { foods, recent, suggestions }
+```
+
+### Data Flow (Manual Log)
+```
+Food Search → Select food → Food Detail (serving size, quantity, meal type) → Log to meal_logs
+  → logFoodToRecent() updates recent_foods table
+  → syncUserData() refreshes nutrition store
+  → Navigate back
+```
+
+### Serving Size Memory
+- Each food log stores: `last_quantity`, `last_unit`, `last_meal_type`
+- Pre-filled when user taps a recent food from search
+
 ## Key Decisions
-- `router.back()` / `navigation.goBack()` replaced with explicit `navigate('/index')` or `navigate('/(ai-trainer)')` because tab navigators have no history to pop
-- Food database expansion uses Python scripts that check `existing_names` set to avoid duplicates
-- AI prompts explicitly enumerate Indian dishes rather than relying on model's inherent knowledge
-- On-device TF.js classifier removed from camera path (broken model URL, poor ImageNet-only coverage, no Indian food support; Groq vision is superior)
-- Nutrition scaling uses direct ratio formula `scaleFactor = selectedAmount / baseServingAmount` instead of gram-conversion-with-fallbacks to prevent exponential macro inflation
-- `UNIT_META.gramsPerUnit` added for all count-based units (can: 330g, bottle: 500g, piece: 100g, etc.) so cross-category conversions (e.g., `can → ml`) work via gram bridge
-- `scaleNutrition()` uses category-aware logic: same-unit → direct ratio; target count-based → ratio=quantity (1 count = 1 base serving); else → gram conversion via gramsPerUnit
-- `detectServingUnit()` prioritizes container words (can, bottle, bowl, cup) over bare ml/g numeric patterns
-- `getAvailableUnits()` always includes baseUnit in the returned list
-
-## Nutrition Scaling Architecture
-
-### Core Formula
-```
-scaleFactor = selectedAmount / baseServingAmount
-scaledCalories = baseCalories × scaleFactor
-```
-
-### Category Rules (`scaleNutrition()`)
-1. **Same unit** (e.g., 'can' → 'can'): `ratio = quantity / baseServingValue`
-2. **Target is count-based** (e.g., base='ml' → target='serving'): `ratio = quantity`
-   - 1 count unit = 1 base serving = `baseServingValue` of base unit
-   - Example: 330ml base, 1 serving = 330ml → ratio = 1
-3. **Base is count-based** (e.g., base='can' → target='ml'): convert both to grams
-   - 1 can = 330g (from gramsPerUnit), 500ml = 500g → ratio = 500/330
-4. **Both weight/volume** (e.g., 'g' → 'cup'): convert both to grams
-
-### Data Flow
-```
-Camera/Gallery → Groq vision → {calories: total, servingGrams, serving: "1 can (330ml)"}
-                                     ↓
-Barcode → Open Food Facts/USDA → per-100g values + serving_size
-                                     ↓
-FoodConfirmScreen → parseServingString("1 can (330ml)") → {value:1, unit:'can'}
-                         ↓
-               BaseNutrition {baseServingValue:1, baseServingUnit:'can', calories:140}
-                         ↓
-               ServingSizeEditor → scaleNutrition(base, quantity, unit) → ScaledNutrition
-                         ↓
-               Log to meal_logs (scaled.calories, scaled.protein_g, etc.)
-```
-
-### Edge Cases Handled
-- AI returns `{calories: 140, serving: "1 can (330ml)", servingGrams: 330}` → unit='can', value=1, calories=140
-- AI returns `{calories: 140, serving: "Coca-Cola (330g)", servingGrams: 330}` → unit='g', value=330, calories=140
-- Barcode returns `per100g={cal:42}, serving: "330ml"` → unit='ml', value=330, ratio=3.3 → 140 cal
-- User switches 330ml → 500ml → ratio=500/330 → 212 cal
-- User switches 1 can → 2 cans → ratio=2 → 280 cal
-- User switches 1 can → 1/2 can → ratio=0.5 → 70 cal
+- `router.back()` / `navigation.goBack()` replaced with explicit navigation where tab navigators have no history
+- SQLite with FTS5 for food search (not a remote API) — works offline, fast, no rate limits
+- `foods` table seeded from existing `food_database.json` (1016 entries) on first access, auto-migrated one-time
+- FTS5 fallback to LIKE search when virtual table unavailable
+- `ensureFoodDatabaseSeeded()` auto-runs on first `searchFoods()` call
+- Nutrition always from DB, never AI — even Quick Add requires user-entered numbers
+- Saved meals store pre-calculated totals + per-food breakdown
+- Recent foods auto-tracked on every log via `logFoodToRecent()`
 
 ## Relevant Files
-- `lib/nutritionScale.ts` — Core scaling engine: `scaleNutrition()`, `estimateBaseNutrition()`, `parseServingString()`, `detectServingUnit()`, `getAvailableUnits()`, `getServingPresets()`, `UNIT_META`
-- `screens/FoodConfirmScreen.tsx` — Camera/gallery/voice food confirmation with unit detection
-- `screens/BarcodeResultScreen.tsx` — Barcode scan result with per-100g → serving scaling
-- `lib/barcodeService.ts` — Open Food Facts + USDA lookup, `parseServingGrams()`
-- `lib/nutritionAI.ts` — AI pipeline: Groq vision, DB matching, image caching
-- `components/ui/ServingSizeEditor.tsx` — Interactive serving size UI with presets, unit selector, live macro preview
-- `components/ui/FloatingTabBar.tsx:58` — `goBack()` → `navigate('index')` fix
-- `app/(ai-trainer)/coach.tsx:409` — `router.back()` → `router.navigate('/(ai-trainer)')` fix
-- `app/modals/camera-capture.tsx` — Camera view with reference card/coin overlay
-- `lib/db.ts` — SQLite schema: `food_cache`, `food_scans` tables
+- `lib/foodSearch.ts` — Search engine: FTS5 queries, seed, recent/frequent, saved meals CRUD, calculateMacros
+- `lib/db.ts` — Expanded schema v4: foods, food_servings, user_custom_foods, saved_meals, saved_meal_foods, recent_foods, FTS5 virtual table
+- `app/modals/food-search.tsx` — Premium search screen with recent/frequent/saved meals/verified/Quick Add
+- `app/modals/food-detail.tsx` — Food detail with serving selector, Quick Add mode, nutrition facts
+- `app/modals/log-food.tsx` — Added "Search" button to tool row
+- `app/(tabs)/food.tsx` — Added "Search Food Database" shortcut card
+- `lib/nutritionScale.ts` — Core scaling engine
+- `screens/FoodConfirmScreen.tsx` — AI food confirmation with confidence badges + meal insights
+- `app/modals/camera-capture.tsx` — Premium camera UX
+- `lib/nutritionAI.ts` — AI pipeline with confidence, quality analysis, deterministic fallback
 
 ## Pre-existing TS Errors (unchanged)
 - `constants/exercises.ts(121-128)`: 8 errors — `"Cardio"` not assignable to `"Compound" | "Isolation"`
