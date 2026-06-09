@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useUserStore } from '@/store/userStore';
 import { supabase } from '@/lib/supabase';
 import { syncUserData } from '@/lib/sync';
@@ -30,6 +31,7 @@ interface ItemState {
   carb100: number;
   fat100: number;
   fiber100: number;
+  confidence?: number;
 }
 
 interface RecentFood {
@@ -43,6 +45,17 @@ interface RecentFood {
   last_grams_used: number;
   last_meal_type: string;
   log_count: number;
+}
+
+interface DailyProgress {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  goalCalories: number;
+  goalProtein: number;
+  goalCarbs: number;
+  goalFat: number;
 }
 
 const C = {
@@ -82,6 +95,15 @@ function getMealTypeByTime(): string {
   return 'snack';
 }
 
+function getMealEmoji(type: string): string {
+  switch (type) {
+    case 'breakfast': return '🌅';
+    case 'lunch': return '☀️';
+    case 'dinner': return '🌙';
+    default: return '🍎';
+  }
+}
+
 function MacroBalance({ totals }: { totals: { cal: number; prot: number; carb: number; fat: number } }) {
   const totalCal = totals.cal || 1;
   const pPct = Math.round(totals.prot * 4 / totalCal * 100);
@@ -110,6 +132,83 @@ function Pill({ label, color, pct }: { label: string; color: string; pct: number
   );
 }
 
+function ConfidenceBadge({ confidence }: { confidence?: number }) {
+  if (confidence == null) return null;
+  const pct = Math.round(confidence * 100);
+  const color = pct >= 80 ? '#22C55E' : pct >= 50 ? '#F59E0B' : '#EF4444';
+  const label = pct >= 80 ? 'High' : pct >= 50 ? 'Medium' : 'Low';
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center', gap: 4,
+      backgroundColor: color + '18', borderRadius: 6,
+      paddingHorizontal: 8, paddingVertical: 3,
+    }}>
+      <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: color }} />
+      <Text style={{ fontSize: 10, fontWeight: '700', color }}>{label}</Text>
+      <Text style={{ fontSize: 9, fontWeight: '500', color: color + 'AA' }}>{pct}%</Text>
+    </View>
+  );
+}
+
+function DailyGoalCard({ progress, totals }: { progress: DailyProgress; totals: { cal: number; prot: number; carb: number; fat: number } }) {
+  const calPct = Math.min(totals.cal / progress.goalCalories, 1);
+  const remaining = progress.goalCalories - (progress.calories + totals.cal);
+  const isOver = remaining < 0;
+
+  return (
+    <Animated.View entering={FadeInDown.delay(100)} style={{
+      backgroundColor: C.surface, borderRadius: 16, padding: 16, marginBottom: 16,
+      borderWidth: 1, borderColor: C.border,
+    }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <Text style={{ fontSize: 11, fontWeight: '700', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Daily Goal
+        </Text>
+        <Text style={{ fontSize: 12, fontWeight: '600', color: isOver ? '#EF4444' : C.primary }}>
+          {isOver ? `${Math.abs(remaining)} over` : `${Math.round(remaining)} left`}
+        </Text>
+      </View>
+
+      <View style={{ height: 8, borderRadius: 4, backgroundColor: C.border, overflow: 'hidden', marginBottom: 4 }}>
+        <View style={{
+          height: '100%', borderRadius: 4,
+          width: `${Math.min(calPct * 100, 100)}%`,
+          backgroundColor: isOver ? '#EF4444' : C.primary,
+        }} />
+      </View>
+
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 11, fontWeight: '500', color: C.muted }}>
+          {progress.calories + totals.cal} / {progress.goalCalories} kcal
+        </Text>
+        <Text style={{ fontSize: 11, fontWeight: '500', color: isOver ? '#EF4444' : C.muted }}>
+          {Math.round(calPct * 100)}%
+        </Text>
+      </View>
+    </Animated.View>
+  );
+}
+
+function getMealInsight(totals: { prot: number; carb: number; fat: number }): { text: string; icon: string; color: string } {
+  const protPct = totals.prot * 4 / (totals.prot * 4 + totals.carb * 4 + totals.fat * 9) * 100 || 0;
+  const carbPct = totals.carb * 4 / (totals.prot * 4 + totals.carb * 4 + totals.fat * 9) * 100 || 0;
+  const fatPct = totals.fat * 9 / (totals.prot * 4 + totals.carb * 4 + totals.fat * 9) * 100 || 0;
+
+  if (protPct < 10 && totals.prot < 10) {
+    return { text: 'Low protein — add a lean protein source', icon: 'alert-triangle', color: '#EF4444' };
+  }
+  if (carbPct > 65 && totals.carb > 60) {
+    return { text: 'Higher-carb meal — balance with protein later', icon: 'alert-circle', color: '#F59E0B' };
+  }
+  if (fatPct > 40 && totals.fat > 30) {
+    return { text: 'Higher-fat meal — watch portions', icon: 'info', color: '#3B82F6' };
+  }
+  if (protPct > 30 && totals.prot > 30) {
+    return { text: 'High protein — great for muscle recovery', icon: 'check-circle', color: '#22C55E' };
+  }
+  return { text: 'Balanced meal — keep it up!', icon: 'check-circle', color: '#22C55E' };
+}
+
 export default function FoodConfirmScreen({ params, onClose }: {
   params: FoodConfirmParams;
   onClose: () => void;
@@ -125,6 +224,7 @@ export default function FoodConfirmScreen({ params, onClose }: {
   const [recentFoods, setRecentFoods] = useState<RecentFood[]>([]);
   const [showRecent, setShowRecent] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [dailyProgress, setDailyProgress] = useState<DailyProgress | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -141,16 +241,47 @@ export default function FoodConfirmScreen({ params, onClose }: {
         carb100: i.carbs_per_100g,
         fat100: i.fat_per_100g,
         fiber100: i.fiber_per_100g,
+        confidence: i.confidence,
       })));
       setInitialized(true);
     })();
   }, []);
 
   useEffect(() => {
+    if (user?.id) loadDailyProgress();
+  }, [user]);
+
+  useEffect(() => {
     if (showAddSearch && user?.id) {
       loadRecentFoods();
     }
   }, [showAddSearch]);
+
+  const loadDailyProgress = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const { data } = await supabase
+        .from('meal_logs')
+        .select('calories, protein_g, carbs_g, fat_g')
+        .gte('logged_at', today)
+        .lt('logged_at', today + 'T23:59:59.999Z')
+        .eq('user_id', user?.id);
+      const sums = (data || []).reduce((acc: any, r: any) => ({
+        calories: acc.calories + (r.calories || 0),
+        protein: acc.protein + (r.protein_g || 0),
+        carbs: acc.carbs + (r.carbs_g || 0),
+        fat: acc.fat + (r.fat_g || 0),
+      }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+      const goals = (user as any)?.goals || {};
+      setDailyProgress({
+        ...sums,
+        goalCalories: goals.calories || 2000,
+        goalProtein: goals.protein || 150,
+        goalCarbs: goals.carbs || 250,
+        goalFat: goals.fat || 65,
+      });
+    } catch {}
+  };
 
   const loadRecentFoods = async () => {
     try {
@@ -189,6 +320,13 @@ export default function FoodConfirmScreen({ params, onClose }: {
       },
       { cal: 0, prot: 0, carb: 0, fat: 0, fiber: 0 }
     ),
+    [itemStates]
+  );
+
+  const insight = useMemo(() => getMealInsight(totals), [totals]);
+
+  const hasLowConfidence = useMemo(() =>
+    itemStates.some(i => i.confidence != null && i.confidence < 0.5),
     [itemStates]
   );
 
@@ -261,19 +399,6 @@ export default function FoodConfirmScreen({ params, onClose }: {
       setAddSearchLoading(false);
     }
   }, [addSearchText, user]);
-
-  const getTodayCalories = async (userId: string): Promise<number> => {
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      const { data } = await supabase
-        .from('meal_logs')
-        .select('calories')
-        .gte('logged_at', today)
-        .lt('logged_at', today + 'T23:59:59.999Z')
-        .eq('user_id', userId);
-      return (data || []).reduce((s, r: any) => s + (r.calories || 0), 0);
-    } catch { return 0; }
-  };
 
   const handleLogAll = async () => {
     if (!user?.id) {
@@ -366,11 +491,12 @@ export default function FoodConfirmScreen({ params, onClose }: {
 
       const dailyGoal = (user as any)?.goals?.calories;
       if (dailyGoal) {
-        const todayCal = await getTodayCalories(userId);
-        const remaining = dailyGoal - todayCal;
-        const msg = remaining > 0
-          ? `Logged ✓  ${remaining} kcal remaining today`
-          : `Logged ✓  ${Math.abs(remaining)} kcal over goal today`;
+        const todayCal = dailyProgress?.calories || 0;
+        const newTotal = todayCal + totals.cal;
+        const remaining = dailyGoal - newTotal;
+        const msg = remaining >= 0
+          ? `Logged ✓  ${Math.round(remaining)} kcal remaining today`
+          : `Logged ✓  ${Math.abs(Math.round(remaining))} kcal over goal today`;
         Alert.alert('', msg);
       }
 
@@ -415,6 +541,19 @@ export default function FoodConfirmScreen({ params, onClose }: {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {hasLowConfidence && (
+          <Animated.View entering={FadeInDown} style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            backgroundColor: '#FEF3C7', borderRadius: 12, padding: 12, marginBottom: 12,
+            borderWidth: 1, borderColor: '#FDE68A',
+          }}>
+            <Feather name="alert-triangle" size={16} color="#D97706" />
+            <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: '#92400E' }}>
+              Some items need review — please verify the details below.
+            </Text>
+          </Animated.View>
+        )}
+
         {params.imageUri ? (
           <View style={{ position: 'relative', marginBottom: 8 }}>
             <Image source={{ uri: params.imageUri }} style={{ width: '100%', height: 200, borderRadius: 0 }} resizeMode="cover" />
@@ -453,7 +592,9 @@ export default function FoodConfirmScreen({ params, onClose }: {
           end={{ x: 1, y: 1.2 }}
           style={{ borderRadius: 16, padding: 16, marginBottom: 16 }}
         >
-          <Text style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.8, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase' }}>TOTAL</Text>
+          <Text style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.8, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase' }}>
+            {getMealEmoji(mealType)} {mealType.charAt(0).toUpperCase() + mealType.slice(1)}
+          </Text>
           <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 4 }}>
             <Text style={{ fontSize: 36, fontWeight: '800', color: '#FFFFFF' }}>{totals.cal}</Text>
             <Text style={{ fontSize: 16, fontWeight: '500', color: 'rgba(255,255,255,0.7)' }}>kcal</Text>
@@ -468,22 +609,42 @@ export default function FoodConfirmScreen({ params, onClose }: {
           <MacroBalance totals={totals} />
         </LinearGradient>
 
+        <Animated.View entering={FadeInDown.delay(50)} style={{
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+          backgroundColor: insight.color + '12', borderRadius: 12, padding: 12, marginBottom: 16,
+          borderWidth: 1, borderColor: insight.color + '25',
+        }}>
+          <Feather name={insight.icon as any} size={16} color={insight.color} />
+          <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: insight.color }}>{insight.text}</Text>
+        </Animated.View>
+
+        {dailyProgress && (
+          <DailyGoalCard progress={dailyProgress} totals={totals} />
+        )}
+
         {itemStates.map((item, idx) => {
           const scaled = scaleItem(item);
           return (
-            <View key={`item-${idx}`} style={{
-              backgroundColor: C.surface, borderRadius: 16, padding: 16, marginBottom: 12,
-              borderWidth: 1, borderColor: C.border,
-              shadowColor: C.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
-            }}>
+            <Animated.View
+              key={`item-${idx}`}
+              entering={FadeInDown.delay(idx * 80)}
+              style={{
+                backgroundColor: C.surface, borderRadius: 16, padding: 16, marginBottom: 12,
+                borderWidth: 1, borderColor: C.border,
+                shadowColor: C.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
+              }}
+            >
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <TextInput
-                  style={{ flex: 1, fontSize: 16, fontWeight: '700', color: C.text, paddingVertical: 0, marginRight: 8, borderBottomWidth: 1, borderBottomColor: 'transparent' }}
-                  value={item.name}
-                  onChangeText={(t) => updateName(idx, t)}
-                  placeholder="Food name"
-                  placeholderTextColor={C.muted}
-                />
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TextInput
+                    style={{ flex: 1, fontSize: 16, fontWeight: '700', color: C.text, paddingVertical: 0, borderBottomWidth: 1, borderBottomColor: 'transparent' }}
+                    value={item.name}
+                    onChangeText={(t) => updateName(idx, t)}
+                    placeholder="Food name"
+                    placeholderTextColor={C.muted}
+                  />
+                  <ConfidenceBadge confidence={item.confidence} />
+                </View>
                 <TouchableOpacity onPress={() => removeItem(idx)} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="x" size={16} color={C.muted} />
                 </TouchableOpacity>
@@ -545,12 +706,12 @@ export default function FoodConfirmScreen({ params, onClose }: {
                 <Text style={{ fontSize: 10, color: C.muted }}>·</Text>
                 <Text style={{ fontSize: 12, fontWeight: '600', color: C.fat }}>F {scaled.fat}g</Text>
               </View>
-            </View>
+            </Animated.View>
           );
         })}
 
         {showAddSearch ? (
-          <View style={{
+          <Animated.View entering={FadeInDown} style={{
             backgroundColor: C.surface, borderRadius: 16, padding: 16, marginBottom: 16,
             borderWidth: 1, borderColor: C.border,
           }}>
@@ -615,7 +776,7 @@ export default function FoodConfirmScreen({ params, onClose }: {
                 )}
               </TouchableOpacity>
             </View>
-          </View>
+          </Animated.View>
         ) : (
           <TouchableOpacity
             style={{

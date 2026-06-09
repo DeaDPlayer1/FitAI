@@ -1,15 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Image,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
+import Animated, {
+  useSharedValue, useAnimatedStyle, withRepeat, withTiming,
+  withSequence, Easing, FadeIn, FadeOut,
+} from 'react-native-reanimated';
 import { theme } from '@/constants/theme';
 import { useUserStore } from '@/store/userStore';
 import { analyzeImageWithAI } from '@/lib/nutritionAI';
 
 type UIState = 'idle' | 'capturing' | 'processing';
+type FlashMode = 'off' | 'on' | 'auto';
 
 export default function CameraCaptureModal() {
   const router = useRouter();
@@ -18,6 +25,22 @@ export default function CameraCaptureModal() {
   const [permission, requestPermission] = useCameraPermissions();
   const [uiState, setUIState] = useState<UIState>('idle');
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [flash, setFlash] = useState<FlashMode>('off');
+  const [showGrid, setShowGrid] = useState(false);
+
+  const pulse = useSharedValue(1);
+  const shutterScale = useSharedValue(1);
+  const gridOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1.03, { duration: 1500, easing: Easing.inOut(Easing.sin) }),
+        withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.sin) }),
+      ),
+      -1, true
+    );
+  }, []);
 
   useEffect(() => {
     if (!permission?.granted) {
@@ -25,27 +48,87 @@ export default function CameraCaptureModal() {
     }
   }, [permission?.granted]);
 
-  if (!permission?.granted) {
-    return (
-      <View style={styles.permissionContainer}>
-        <Feather name="camera-off" size={48} color={theme.colors.text.muted} />
-        <Text style={styles.permissionTitle}>Camera Permission Required</Text>
-        <Text style={styles.permissionText}>Camera access is needed to analyse food.</Text>
-        <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
-          <Text style={styles.permissionBtnText}>Grant Permission</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.manualBtn} onPress={() => router.back()}>
-          <Text style={styles.manualBtnText}>Enter Manually</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const triggerHaptic = useCallback(async () => {
+    try {
+      const Haptics = await import('expo-haptics');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
+  }, []);
 
-  const capturePhoto = async () => {
+  const animateShutter = useCallback(async () => {
+    shutterScale.value = withSequence(
+      withTiming(0.8, { duration: 80 }),
+      withTiming(1.1, { duration: 120 }),
+      withTiming(1, { duration: 100 }),
+    );
+  }, [shutterScale]);
+
+  const pulseStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pulse.value }],
+  }));
+
+  const shutterStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: shutterScale.value }],
+  }));
+
+  const gridStyle = useAnimatedStyle(() => ({
+    opacity: gridOpacity.value,
+  }));
+
+  const toggleGrid = useCallback(() => {
+    setShowGrid(prev => {
+      const next = !prev;
+      gridOpacity.value = withTiming(next ? 1 : 0, { duration: 200 });
+      return next;
+    });
+  }, [gridOpacity]);
+
+  const pickFromGallery = useCallback(async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        alert('Photo library access is needed to import food images.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.8,
+      });
+      if (result.canceled) return;
+      setSelectedImageUri(result.assets[0].uri);
+      setUIState('processing');
+      try {
+        const analysisResult = await analyzeImageWithAI(result.assets[0].uri, user?.id);
+        (router as any).replace({
+          pathname: '/modals/confirm-food',
+          params: {
+            imageUri: result.assets[0].uri,
+            aiDescription: analysisResult.ai_description,
+            items: JSON.stringify(analysisResult.items),
+            inputType: 'gallery',
+          },
+        });
+      } catch (err: any) {
+        setUIState('idle');
+        const msg = err.message?.includes('No food detected')
+          ? 'No food detected. Try a clearer photo.'
+          : 'Analysis failed. Try again.';
+        alert(msg);
+      }
+    } catch {}
+  }, [router, user]);
+
+  const capturePhoto = useCallback(async () => {
     if (!cameraRef.current || uiState !== 'idle') return;
     setUIState('capturing');
+    await triggerHaptic();
+    animateShutter();
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 }) as any;
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.8,
+        ...(flash !== 'off' ? {} : {}),
+      }) as any;
       if (!photo) throw new Error('No photo captured');
       const uri = photo.uri;
       setSelectedImageUri(uri);
@@ -68,7 +151,23 @@ export default function CameraCaptureModal() {
         : 'Analysis failed. Try again or enter manually.';
       alert(msg);
     }
-  };
+  }, [cameraRef, uiState, flash, triggerHaptic, animateShutter, router, user]);
+
+  if (!permission?.granted) {
+    return (
+      <View style={styles.permissionContainer}>
+        <Feather name="camera-off" size={48} color={theme.colors.text.muted} />
+        <Text style={styles.permissionTitle}>Camera Permission Required</Text>
+        <Text style={styles.permissionText}>Camera access is needed to analyse food.</Text>
+        <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
+          <Text style={styles.permissionBtnText}>Grant Permission</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.manualBtn} onPress={() => router.back()}>
+          <Text style={styles.manualBtnText}>Enter Manually</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -76,49 +175,96 @@ export default function CameraCaptureModal() {
         ref={cameraRef}
         style={styles.camera}
         facing="back"
+        flash={flash}
       >
-        <TouchableOpacity
-          style={styles.closeBtn}
-          onPress={() => router.back()}
-        >
-          <Feather name="x" size={28} color="#FFFFFF" />
-        </TouchableOpacity>
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={() => router.back()}
+          >
+            <Feather name="x" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
 
-        <View style={styles.overlayContent}>
-          <View style={styles.focusFrame}>
+          <Text style={styles.topBarTitle}>Food Scanner</Text>
+
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={toggleGrid}
+          >
+            <Feather name="grid" size={20} color={showGrid ? theme.colors.warning : '#FFFFFF'} />
+          </TouchableOpacity>
+        </View>
+
+        {showGrid && (
+          <Animated.View style={[styles.gridOverlay, gridStyle]} pointerEvents="none">
+            <View style={styles.gridLineV1} />
+            <View style={styles.gridLineV2} />
+            <View style={styles.gridLineH1} />
+            <View style={styles.gridLineH2} />
+          </Animated.View>
+        )}
+
+        <View style={styles.centerContent}>
+          <Animated.View style={[styles.focusFrame, pulseStyle]}>
             <View style={styles.focusBorder} />
+            <View style={styles.focusCornerTL} />
+            <View style={styles.focusCornerTR} />
+            <View style={styles.focusCornerBL} />
+            <View style={styles.focusCornerBR} />
             <Text style={styles.focusLabel}>Place food here</Text>
-          </View>
-          {/* ── Reference card/coin for scale ── */}
+          </Animated.View>
+
           <View style={styles.referenceRow}>
             <View style={styles.referenceCard}>
               <View style={styles.referenceCardInner} />
-              <Text style={styles.referenceLabel}>Credit Card</Text>
+              <Text style={styles.referenceLabel}>Card</Text>
             </View>
             <View style={styles.referenceCoin}>
               <View style={styles.referenceCoinInner} />
               <Text style={styles.referenceLabel}>Coin</Text>
             </View>
           </View>
-          <Text style={styles.hintText}>Place a card or coin nearby for scale</Text>
         </View>
 
-        <View style={styles.bottomRow}>
+        <View style={styles.bottomBar}>
+          <TouchableOpacity
+            style={styles.sideBtn}
+            onPress={pickFromGallery}
+          >
+            <Feather name="image" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+
           {uiState === 'processing' && selectedImageUri ? (
             <View style={styles.processingOverlay}>
               <Image source={{ uri: selectedImageUri }} style={styles.thumbnail} />
-              <ActivityIndicator size="small" color="#FFFFFF" style={styles.thumbnailSpinner} />
-              <Text style={styles.processingText}>Analysing your food...</Text>
+              <ActivityIndicator size="small" color="#FFFFFF" />
+              <Text style={styles.processingText}>Analysing...</Text>
             </View>
           ) : (
-            <TouchableOpacity
-              style={styles.captureBtn}
-              onPress={capturePhoto}
-              disabled={uiState !== 'idle'}
-            >
-              <View style={styles.captureInner} />
-            </TouchableOpacity>
+            <Animated.View style={shutterStyle}>
+              <TouchableOpacity
+                style={styles.captureBtn}
+                onPress={capturePhoto}
+                disabled={uiState !== 'idle'}
+                activeOpacity={0.8}
+              >
+                <View style={styles.captureOuter}>
+                  <View style={styles.captureInner} />
+                </View>
+              </TouchableOpacity>
+            </Animated.View>
           )}
+
+          <TouchableOpacity
+            style={styles.sideBtn}
+            onPress={() => setFlash(prev => prev === 'off' ? 'on' : prev === 'on' ? 'auto' : 'off')}
+          >
+            <Feather
+              name={flash === 'off' ? 'zap-off' : 'zap'}
+              size={20}
+              color={flash === 'off' ? 'rgba(255,255,255,0.5)' : theme.colors.warning}
+            />
+          </TouchableOpacity>
         </View>
       </CameraView>
     </View>
@@ -128,68 +274,139 @@ export default function CameraCaptureModal() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   camera: { flex: 1 },
-  closeBtn: {
-    position: 'absolute', top: 60, left: 20,
-    width: 44, height: 44, borderRadius: 22,
+
+  topBar: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingTop: Platform.OS === 'ios' ? 56 : 40,
+    paddingHorizontal: 16, paddingBottom: 12,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  topBarBtn: {
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center', justifyContent: 'center',
   },
-  overlayContent: {
+  topBarTitle: {
+    fontSize: 16, fontWeight: '700', color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+
+  gridOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+  },
+  gridLineV1: {
+    position: 'absolute', left: '33.33%', top: 0, bottom: 0,
+    width: 0.5, backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  gridLineV2: {
+    position: 'absolute', left: '66.66%', top: 0, bottom: 0,
+    width: 0.5, backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  gridLineH1: {
+    position: 'absolute', top: '33.33%', left: 0, right: 0,
+    height: 0.5, backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  gridLineH2: {
+    position: 'absolute', top: '66.66%', left: 0, right: 0,
+    height: 0.5, backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+
+  centerContent: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
   },
   focusFrame: {
-    width: 260, height: 260, borderRadius: 16,
-    borderWidth: 2, borderColor: theme.colors.primary + '80',
+    width: 250, height: 250, borderRadius: 20,
     alignItems: 'center', justifyContent: 'flex-end',
     paddingBottom: 16,
   },
   focusBorder: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    borderRadius: 16, borderWidth: 2, borderColor: theme.colors.primary,
+    position: 'absolute', top: 2, left: 2, right: 2, bottom: 2,
+    borderRadius: 18,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.15)',
+  },
+  focusCornerTL: {
+    position: 'absolute', top: 0, left: 0,
+    width: 24, height: 24,
+    borderTopWidth: 3, borderLeftWidth: 3,
+    borderColor: theme.colors.primary,
+    borderTopLeftRadius: 12,
+  },
+  focusCornerTR: {
+    position: 'absolute', top: 0, right: 0,
+    width: 24, height: 24,
+    borderTopWidth: 3, borderRightWidth: 3,
+    borderColor: theme.colors.primary,
+    borderTopRightRadius: 12,
+  },
+  focusCornerBL: {
+    position: 'absolute', bottom: 0, left: 0,
+    width: 24, height: 24,
+    borderBottomWidth: 3, borderLeftWidth: 3,
+    borderColor: theme.colors.primary,
+    borderBottomLeftRadius: 12,
+  },
+  focusCornerBR: {
+    position: 'absolute', bottom: 0, right: 0,
+    width: 24, height: 24,
+    borderBottomWidth: 3, borderRightWidth: 3,
+    borderColor: theme.colors.primary,
+    borderBottomRightRadius: 12,
   },
   focusLabel: {
     fontSize: 13, fontWeight: '600', color: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 12, paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 14, paddingVertical: 6,
+    borderRadius: 10, overflow: 'hidden',
+    letterSpacing: 0.3,
   },
-  hintText: {
-    fontSize: 14, fontWeight: '500', color: 'rgba(255,255,255,0.7)',
-    marginTop: 16,
-  },
-  bottomRow: {
-    alignItems: 'center', paddingBottom: 60,
-  },
+
   referenceRow: {
-    flexDirection: 'row', gap: 20, alignItems: 'center',
+    flexDirection: 'row', gap: 24, alignItems: 'center',
     marginTop: 20,
   },
   referenceCard: {
-    width: 60, height: 38, borderRadius: 4,
-    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)',
+    width: 56, height: 36, borderRadius: 4,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)',
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   referenceCardInner: {
-    width: 48, height: 28, borderRadius: 2,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    width: 44, height: 26, borderRadius: 2,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
   referenceCoin: {
-    width: 38, height: 38, borderRadius: 19,
-    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.5)',
+    width: 36, height: 36, borderRadius: 18,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)',
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   referenceCoinInner: {
-    width: 26, height: 26, borderRadius: 13,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    width: 24, height: 24, borderRadius: 12,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
   referenceLabel: {
     position: 'absolute', bottom: -16,
-    fontSize: 9, fontWeight: '600', color: 'rgba(255,255,255,0.5)',
+    fontSize: 9, fontWeight: '600', color: 'rgba(255,255,255,0.45)',
+  },
+
+  bottomBar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+    paddingTop: 16, paddingHorizontal: 32,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  sideBtn: {
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center', justifyContent: 'center',
   },
   captureBtn: {
+    width: 80, height: 80, borderRadius: 40,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  captureOuter: {
     width: 76, height: 76, borderRadius: 38,
     borderWidth: 4, borderColor: '#FFFFFF',
     alignItems: 'center', justifyContent: 'center',
@@ -198,14 +415,15 @@ const styles = StyleSheet.create({
     width: 62, height: 62, borderRadius: 31,
     backgroundColor: '#FFFFFF',
   },
+
   processingOverlay: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 20, paddingVertical: 12,
-    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 20, paddingVertical: 14,
+    borderRadius: 20,
   },
-  thumbnail: { width: 40, height: 40, borderRadius: 8 },
-  thumbnailSpinner: { position: 'absolute', left: 10, top: 10 },
+  thumbnail: { width: 40, height: 40, borderRadius: 10 },
   processingText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
+
   permissionContainer: {
     flex: 1, backgroundColor: theme.colors.background,
     alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12,
