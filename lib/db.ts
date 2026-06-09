@@ -147,6 +147,127 @@ async function initTables() {
   try {
     await db.execAsync(`ALTER TABLE user_food_history ADD COLUMN last_meal_type TEXT DEFAULT 'snack'`);
   } catch {}
+  // ── Migration v4: food database system (foods, food_servings, user_custom_foods, saved_meals, recent_foods, FTS5) ──
+  try {
+    const meta = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM _meta WHERE key = 'schema_version'"
+    );
+    const ver = meta ? parseInt(meta.value) : 1;
+    if (ver < 4) {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS foods (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          canonical_name TEXT NOT NULL UNIQUE,
+          brand_name TEXT DEFAULT '',
+          barcode TEXT,
+          category TEXT DEFAULT '',
+          verified INTEGER DEFAULT 0,
+          source TEXT DEFAULT 'bundled',
+          calories_per_100g REAL NOT NULL,
+          protein_per_100g REAL NOT NULL,
+          carbs_per_100g REAL NOT NULL,
+          fat_per_100g REAL NOT NULL,
+          fiber_per_100g REAL DEFAULT 0,
+          sugar_per_100g REAL DEFAULT 0,
+          sodium_per_100g REAL DEFAULT 0,
+          serving_size TEXT DEFAULT '100g',
+          serving_grams REAL DEFAULT 100,
+          aliases TEXT DEFAULT '[]',
+          search_terms TEXT DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS food_servings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          food_id INTEGER NOT NULL,
+          serving_name TEXT NOT NULL,
+          grams REAL,
+          ml REAL,
+          household_measure INTEGER DEFAULT 0,
+          FOREIGN KEY (food_id) REFERENCES foods(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS user_custom_foods (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          brand TEXT DEFAULT '',
+          calories_per_100g REAL NOT NULL DEFAULT 0,
+          protein_per_100g REAL NOT NULL DEFAULT 0,
+          carbs_per_100g REAL NOT NULL DEFAULT 0,
+          fat_per_100g REAL NOT NULL DEFAULT 0,
+          fiber_per_100g REAL DEFAULT 0,
+          sugar_per_100g REAL DEFAULT 0,
+          sodium_per_100g REAL DEFAULT 0,
+          serving_size TEXT DEFAULT '1 serving',
+          serving_grams REAL DEFAULT 100,
+          is_recipe INTEGER DEFAULT 0,
+          recipe_json TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS saved_meals (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,
+          meal_name TEXT NOT NULL,
+          meal_type TEXT DEFAULT 'snack',
+          total_calories REAL DEFAULT 0,
+          total_protein REAL DEFAULT 0,
+          total_carbs REAL DEFAULT 0,
+          total_fat REAL DEFAULT 0,
+          is_favorite INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS saved_meal_foods (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          meal_id INTEGER NOT NULL,
+          food_id INTEGER,
+          custom_food_id INTEGER,
+          food_name TEXT NOT NULL,
+          quantity REAL NOT NULL DEFAULT 100,
+          unit TEXT DEFAULT 'g',
+          calories REAL NOT NULL DEFAULT 0,
+          protein REAL NOT NULL DEFAULT 0,
+          carbs REAL NOT NULL DEFAULT 0,
+          fat REAL NOT NULL DEFAULT 0,
+          fiber REAL DEFAULT 0,
+          FOREIGN KEY (meal_id) REFERENCES saved_meals(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS recent_foods (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,
+          food_id INTEGER,
+          food_name TEXT NOT NULL,
+          calories_per_100g REAL NOT NULL,
+          protein_per_100g REAL NOT NULL,
+          carbs_per_100g REAL NOT NULL,
+          fat_per_100g REAL NOT NULL,
+          fiber_per_100g REAL DEFAULT 0,
+          serving_size TEXT DEFAULT '100g',
+          serving_grams REAL DEFAULT 100,
+          last_quantity REAL DEFAULT 100,
+          last_unit TEXT DEFAULT 'g',
+          last_meal_type TEXT DEFAULT 'snack',
+          log_count INTEGER DEFAULT 1,
+          last_logged TEXT NOT NULL DEFAULT (datetime('now')),
+          source TEXT DEFAULT 'bundled',
+          UNIQUE(user_id, food_name)
+        );
+      `);
+      // Create FTS5 index (may fail if FTS5 not available, catch gracefully)
+      try {
+        await db.execAsync(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts5(
+            canonical_name, brand_name, aliases, search_terms, category,
+            content='foods',
+            content_rowid='id'
+          );
+        `);
+      } catch (e) {
+        console.warn('[db] FTS5 not available, using LIKE-based search fallback');
+      }
+      await db.runAsync(
+        "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', '4')"
+      );
+    }
+  } catch {}
 }
 
 export interface Conversation {

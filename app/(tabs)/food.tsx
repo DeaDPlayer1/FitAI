@@ -311,6 +311,36 @@ export default function FoodScreen() {
           )}
         </View>
 
+        {/* SECTION 1C — QUICK SEARCH SHORTCUT */}
+        <TouchableOpacity
+          onPress={() => router.push({ pathname: '/modals/food-search', params: { returnTo: 'food' } })}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 10,
+            backgroundColor: theme.colors.surface, borderRadius: 16,
+            padding: 16, marginHorizontal: 16, marginTop: 12,
+            borderWidth: 1, borderColor: theme.colors.border.soft,
+            ...theme.shadow.card,
+          }}
+          activeOpacity={0.7}
+        >
+          <View style={{
+            width: 40, height: 40, borderRadius: 14,
+            backgroundColor: theme.colors.primarySoft,
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Feather name="search" size={20} color={theme.colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.text.primary }}>
+              Search Food Database
+            </Text>
+            <Text style={{ fontSize: 12, fontWeight: '500', color: theme.colors.text.muted }}>
+              1000+ foods · Manual log · Recent · Barcode
+            </Text>
+          </View>
+          <Feather name="chevron-right" size={18} color={theme.colors.text.muted} />
+        </TouchableOpacity>
+
         {/* SECTION 2 — DAILY ENERGY OVERVIEW */}
         <Animated.View entering={FadeInDown.delay(100).springify()}>
           <EnergyRingCard

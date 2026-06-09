@@ -194,6 +194,13 @@ export default function LogFoodModal() {
               
               <View style={styles.toolRow}>
                 <TouchableOpacity 
+                  onPress={() => router.push({ pathname: '/modals/food-search', params: { returnTo: 'log-food' } })}
+                  style={styles.toolBtn}
+                >
+                  <Feather name="search" size={20} color={theme.colors.primaryDeep} />
+                  <Text style={styles.toolLabel}>Search</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
                   onPress={() => router.push('/modals/camera-capture')}
                   style={styles.toolBtn}
                 >
