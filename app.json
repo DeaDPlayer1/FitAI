@@ -65,6 +65,7 @@
             "minSdkVersion": 24,
             "kotlinVersion": "2.0.0",
             "newArchEnabled": true,
+            "enableJetifier": true,
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
             "enableMinifyInReleaseBuilds": true
