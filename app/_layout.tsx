@@ -129,6 +129,15 @@ export default function RootLayout() {
         _authRetryTimeout.current = null;
       }
       if (session?.user) {
+        // Skip redundant profile DB fetch during login flow — login.tsx already called setUser().
+        if (useUserStore.getState().isAuthenticated && useUserStore.getState().user?.id === session.user.id) {
+          useModeStore.getState().setMode(useUserStore.getState().user?.app_mode || 'normal');
+          setSentryUser(session.user.id, session.user.email);
+          identifyUser(session.user.id, { name: useUserStore.getState().user?.name || 'User' });
+          trackEvent('user_logged_in');
+          syncUserData(session.user.id).catch(err => console.error('[sync] Sync failed:', err));
+          return;
+        }
         try {
           const profile = await getCurrentUserProfile(session.user.id);
           setUser({ ...profile, email: session.user.email || profile.email });

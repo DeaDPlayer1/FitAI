@@ -122,7 +122,7 @@ export default function LoginScreen() {
       const profile = await Promise.race([
         signInUser(trimmedEmail, password),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Request timed out. Check your connection.')), 30000)
+          setTimeout(() => reject(new Error('Request timed out. Check your connection.')), 15000)
         ),
       ]);
       // Update auth state immediately so route guard can navigate without
@@ -131,6 +131,17 @@ export default function LoginScreen() {
       useModeStore.getState().setMode(profile.app_mode || 'normal');
       await AsyncStorage.setItem(HAS_ACCOUNT_KEY, 'true').catch(() => {});
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Eagerly load today's meals & goals so UI is not empty on arrival.
+      // Short timeout ensures we don't block login if sync is slow.
+      try {
+        const { syncUserData } = await import('@/lib/sync');
+        await Promise.race([
+          syncUserData(profile.id),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('sync timeout')), 5000)
+          ),
+        ]);
+      } catch {}
       // Navigation is handled by the route guard in _layout.tsx.
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

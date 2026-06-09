@@ -24,13 +24,13 @@ export default function BootScreen() {
   const fadeOut = useSharedValue(0);
 
   useEffect(() => {
-    const timer = setTimeout(async () => {
-      fadeOut.value = withTiming(1, { duration: 300 });
+    const timer = setTimeout(() => {
+      fadeOut.value = withTiming(1, { duration: 250 });
       setTimeout(() => {
         const mode = user?.app_mode || 'normal';
         router.replace(mode === 'ai_trainer' ? '/(ai-trainer)' : '/(tabs)');
-      }, 350);
-    }, 1800);
+      }, 300);
+    }, 100);
     return () => clearTimeout(timer);
   }, [user?.app_mode]);
 
