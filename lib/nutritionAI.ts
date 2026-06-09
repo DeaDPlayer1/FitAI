@@ -8,11 +8,7 @@ import foodDatabaseJson from '@/assets/food_database.json';
 
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
 
-// ── Exported Types ──
-
-// ── Per-item food analysis (NEW: per-100g + grams) ──
-
-export type FoodDataSource = 'bundled' | 'open_food_facts' | 'ai' | 'cache' | 'usda';
+export type FoodDataSource = 'bundled' | 'open_food_facts' | 'usda' | 'cache' | 'ai_vision' | 'user';
 
 export interface FoodAnalysisItem {
   name: string;
@@ -23,14 +19,20 @@ export interface FoodAnalysisItem {
   fat_per_100g: number;
   fiber_per_100g: number;
   source?: FoodDataSource;
+  confidence?: number;
 }
 
 export interface AnalysisResult {
   items: FoodAnalysisItem[];
   ai_description: string;
+  imageQuality?: ImageQualityResult;
 }
 
-// ── OLD: merged total (kept for backward compat) ──
+export interface ImageQualityResult {
+  valid: boolean;
+  qualityWarnings: string[];
+  qualityScore: number;
+}
 
 export interface NutritionResult {
   name: string;
@@ -86,29 +88,329 @@ interface FoodResult {
   source: string;
 }
 
+const IMAGE_QUALITY_PROMPT = `Analyze this food image. Return ONLY a JSON object with these fields:
+{
+  "has_food": true/false,
+  "blurry": true/false,
+  "too_dark": true/false,
+  "glare": true/false,
+  "too_far": true/false,
+  "multiple_items": true/false,
+  "quality_score": 0-100
+}
+Quality score: 100=perfect, 0=unusable. Deduct for blur, darkness, glare, distance.
+If no food visible, set has_food=false.`;
+
 // ══════════════════════════════════════════════════════════
-//  FOOD NAME AUTOCORRECT & DESCRIPTION CLEANUP
+//  PHASE 1 & 7: IMAGE VALIDATION + QUALITY ANALYSIS
+// ══════════════════════════════════════════════════════════
+
+export async function analyzeImageQuality(base64: string): Promise<ImageQualityResult> {
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        max_tokens: 100,
+        temperature: 0,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
+            { type: 'text', text: IMAGE_QUALITY_PROMPT },
+          ],
+        }],
+      }),
+    });
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content?.trim() || '{}';
+    const json = JSON.parse(extractJSON(text));
+    const warnings: string[] = [];
+    if (json.blurry) warnings.push('Image may be blurry');
+    if (json.too_dark) warnings.push('Image may be too dark');
+    if (json.glare) warnings.push('Glare detected on image');
+    if (json.too_far) warnings.push('Food appears too far away');
+
+    return {
+      valid: json.has_food === true,
+      qualityWarnings: warnings,
+      qualityScore: json.quality_score ?? 50,
+    };
+  } catch {
+    return { valid: true, qualityWarnings: [], qualityScore: 50 };
+  }
+}
+
+export async function validateFoodImage(base64: string): Promise<boolean> {
+  try {
+    const quality = await analyzeImageQuality(base64);
+    return quality.valid;
+  } catch {
+    return true;
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+//  PHASE 3: FOOD CANONICALIZATION MAP
 // ══════════════════════════════════════════════════════════
 
 const NAME_CANONICAL_MAP: Record<string, string> = {
-  'wheate flour': 'Wheat Flour',
-  'wheate': 'Wheat',
-  'coke': 'Coca-Cola',
-  'coca cola': 'Coca-Cola',
-  'chiken': 'Chicken Breast',
-  'chiken breast': 'Chicken Breast',
+  // Indian dish names
   'paneer': 'Paneer',
   'daal': 'Dal',
+  'dal': 'Dal',
   'roti': 'Chapati',
   'phulka': 'Chapati',
   'chawal': 'Cooked Rice',
+  'bhaat': 'Cooked Rice',
   'dahi': 'Curd',
-  'ghee': 'Butter',
+  'ghee': 'Ghee',
   'aloo': 'Potato',
   'bhindi': 'Okra',
   'baingan': 'Eggplant',
+  'bharta': 'Baingan Bharta',
   'biryani': 'Chicken Biryani',
   'pulao': 'Vegetable Pulao',
+  'pulav': 'Vegetable Pulao',
+  'kheer': 'Rice Pudding',
+  'raita': 'Raita',
+  'chai': 'Tea',
+  'masala chai': 'Tea',
+  'lassi': 'Lassi',
+  'makhani': 'Butter Chicken',
+  'korma': 'Chicken Korma',
+  'tandoori': 'Chicken Tandoori',
+  'seekh': 'Seekh Kebab',
+  'kofta': 'Malai Kofta',
+  'palak': 'Palak Paneer',
+  'saag': 'Palak Paneer',
+  'idli': 'Idli',
+  'dosa': 'Dosa',
+  'vada': 'Vada',
+  'uttapam': 'Uttapam',
+  'sambar': 'Sambar',
+  'rasam': 'Rasam',
+  'chutney': 'Coconut Chutney',
+  'puri': 'Puri',
+  'bhaji': 'Pav Bhaji',
+  'bhel': 'Bhel Puri',
+  'sev': 'Sev Puri',
+  'dabeli': 'Dabeli',
+  'vada pav': 'Vada Pav',
+  'samosa': 'Samosa',
+  'pakora': 'Pakora',
+  'pakode': 'Pakora',
+  'kachori': 'Kachori',
+  'dhokla': 'Dhokla',
+  'thepla': 'Thepla',
+  'paratha': 'Paratha',
+  'naan': 'Naan',
+  'kulcha': 'Naan',
+  'poori': 'Puri',
+  'upma': 'Upma',
+  'poha': 'Poha',
+  'sheera': 'Sheera',
+  'halwa': 'Halwa',
+  'gulab': 'Gulab Jamun',
+  'rasgulla': 'Rasgulla',
+  'jalebi': 'Jalebi',
+  'barfi': 'Barfi',
+  'ladoo': 'Ladoo',
+  'kesari': 'Kesari Bath',
+
+  // Common typos / misspellings
+  'wheate flour': 'Wheat Flour',
+  'wheate': 'Wheat',
+  'chiken': 'Chicken Breast',
+  'chiken breast': 'Chicken Breast',
+  'chicken breast': 'Chicken Breast',
+  'chkn': 'Chicken Breast',
+  'veggies': 'Mixed Vegetables',
+  'veg': 'Mixed Vegetables',
+  'vege': 'Mixed Vegetables',
+  'curd': 'Curd',
+  'yogurt': 'Curd',
+  'yoghurt': 'Curd',
+  'briyani': 'Chicken Biryani',
+  'biriyani': 'Chicken Biryani',
+  'nan': 'Naan',
+  'roti canai': 'Chapati',
+
+  // Western food common names
+  'coke': 'Coca-Cola',
+  'coca cola': 'Coca-Cola',
+  'pepsi': 'Pepsi',
+  'sprite': 'Sprite',
+  'fanta': 'Fanta',
+  'oreo': 'Oreo Cookies',
+  'oreos': 'Oreo Cookies',
+  'maggie': 'Maggi Noodles',
+  'maggi': 'Maggi Noodles',
+  'noodle': 'Instant Noodles',
+  'noodles': 'Instant Noodles',
+  'ramen': 'Instant Noodles',
+  'oat': 'Oats',
+  'oats': 'Oats',
+  'avo': 'Avocado',
+  'avacado': 'Avocado',
+  'adacado': 'Avocado',
+  'broccli': 'Broccoli',
+  'brocolli': 'Broccoli',
+  'cauli': 'Cauliflower',
+  'cauliflwr': 'Cauliflower',
+  'capsicum': 'Bell Pepper',
+  'bell pepper': 'Bell Pepper',
+  'sweet potato': 'Sweet Potato',
+  'sweet potatoe': 'Sweet Potato',
+  'zuchini': 'Zucchini',
+  'zucchini': 'Zucchini',
+  'courgette': 'Zucchini',
+  'aubergine': 'Eggplant',
+  'egg plant': 'Eggplant',
+  'brinjal': 'Eggplant',
+  'mushroom': 'Mushrooms',
+  'mushrom': 'Mushrooms',
+  'tomato': 'Tomato',
+  'tomatos': 'Tomatoes',
+  'potato': 'Potato',
+  'potatos': 'Potatoes',
+  'french fry': 'French Fries',
+  'french fries': 'French Fries',
+  'fries': 'French Fries',
+  'chips': 'French Fries',
+  'burger': 'Hamburger',
+  'ham burger': 'Hamburger',
+  'cheeseburger': 'Cheeseburger',
+  'pizza': 'Pizza',
+  'pasta': 'Pasta',
+  'spagetti': 'Spaghetti',
+  'spaghetti': 'Spaghetti',
+  'mac n cheese': 'Mac and Cheese',
+  'mac and cheese': 'Mac and Cheese',
+  'sandwhich': 'Sandwich',
+  'sandwich': 'Sandwich',
+  'toast': 'Toast',
+  'omlette': 'Omelette',
+  'omlet': 'Omelette',
+  'scrambled': 'Scrambled Eggs',
+  'fried egg': 'Fried Egg',
+  'boiled egg': 'Boiled Egg',
+  'egg': 'Egg',
+  'eggs': 'Eggs',
+  'whey': 'Whey Protein',
+  'whey protein': 'Whey Protein',
+  'protein shake': 'Whey Protein',
+  'protein powder': 'Whey Protein',
+  'smoothie': 'Fruit Smoothie',
+  'salmon': 'Salmon',
+  'tuna': 'Tuna',
+  'sardine': 'Sardines',
+  'mackarel': 'Mackerel',
+  'prawn': 'Prawns',
+  'shrimp': 'Prawns',
+  'fish': 'Fish Fillet',
+  'steak': 'Beef Steak',
+  'beef': 'Beef',
+  'chicken': 'Chicken',
+  'pork': 'Pork',
+  'mutton': 'Mutton',
+  'lamb': 'Lamb',
+  'bacon': 'Bacon',
+  'sausage': 'Sausage',
+  'ham': 'Ham',
+  'salami': 'Salami',
+  'butter': 'Butter',
+  'cheese': 'Cheese',
+  'mayo': 'Mayonnaise',
+  'mayonnaise': 'Mayonnaise',
+  'ketchup': 'Ketchup',
+  'mustard': 'Mustard',
+  'bbq sauce': 'BBQ Sauce',
+  'hot sauce': 'Hot Sauce',
+  'soy sauce': 'Soy Sauce',
+  'vinegar': 'Vinegar',
+  'olive oil': 'Olive Oil',
+  'coconut oil': 'Coconut Oil',
+  'vege oil': 'Vegetable Oil',
+  'vegetable oil': 'Vegetable Oil',
+  'canola oil': 'Canola Oil',
+  'sunflower oil': 'Sunflower Oil',
+  'honey': 'Honey',
+  'maple syrup': 'Maple Syrup',
+  'sugar': 'White Sugar',
+  'brown sugar': 'Brown Sugar',
+  'salt': 'Salt',
+  'pepper': 'Black Pepper',
+  'black pepper': 'Black Pepper',
+
+  // Fruits
+  'apple': 'Apple',
+  'orange': 'Orange',
+  'banana': 'Banana',
+  'bananna': 'Banana',
+  'mango': 'Mango',
+  'grapes': 'Grapes',
+  'strawberry': 'Strawberries',
+  'strawberries': 'Strawberries',
+  'blueberry': 'Blueberries',
+  'blueberries': 'Blueberries',
+  'raspberry': 'Raspberries',
+  'watermelon': 'Watermelon',
+  'muskmelon': 'Muskmelon',
+  'pineapple': 'Pineapple',
+  'papaya': 'Papaya',
+  'pomegranate': 'Pomegranate',
+  'guava': 'Guava',
+  'kiwi': 'Kiwi',
+  'lemon': 'Lemon',
+  'lime': 'Lime',
+  'coconut': 'Coconut',
+  'dates': 'Dates',
+  'fig': 'Figs',
+  'prunes': 'Prunes',
+  'raisins': 'Raisins',
+  'almond': 'Almonds',
+  'almonds': 'Almonds',
+  'badam': 'Almonds',
+  'walnut': 'Walnuts',
+  'walnuts': 'Walnuts',
+  'cashew': 'Cashews',
+  'cashews': 'Cashews',
+  'kaju': 'Cashews',
+  'pista': 'Pistachios',
+  'pistachio': 'Pistachios',
+  'peanut': 'Peanuts',
+  'peanuts': 'Peanuts',
+  'mungfali': 'Peanuts',
+  'raisins': 'Raisins',
+  'kishmish': 'Raisins',
+
+  // Grains
+  'rice': 'Cooked Rice',
+  'white rice': 'Cooked Rice',
+  'basmati rice': 'Cooked Rice',
+  'brown rice': 'Brown Rice',
+  'quinoa': 'Quinoa',
+  'wheat': 'Wheat',
+  'whole wheat': 'Whole Wheat',
+  'flour': 'Wheat Flour',
+  'maida': 'White Flour',
+  'atta': 'Whole Wheat Flour',
+  'sooji': 'Semolina',
+  'rava': 'Semolina',
+  'semolina': 'Semolina',
+  'corn': 'Corn',
+  'maize': 'Corn',
+  'makki': 'Corn',
+  'popcorn': 'Popcorn',
+  'bajra': 'Bajra',
+  'jowar': 'Jowar',
+  'ragi': 'Ragi',
+  'nachni': 'Ragi',
 };
 
 export function canonicalizeFoodName(rawName: string): string {
@@ -137,12 +439,13 @@ export async function verifyAndCrossCheck(item: FoodAnalysisItem): Promise<FoodA
     const db = await getDb();
     await seedFoodCache();
     const key = item.name.toLowerCase().trim();
+    const canonical = canonicalizeFoodName(key).toLowerCase();
+    const searchKey = canonical !== key ? canonical : key;
     const row = await db.getFirstAsync<any>(
       `SELECT * FROM food_cache WHERE LOWER(food_name) = ? OR LOWER(food_name) LIKE ? OR aliases LIKE ?`,
-      key, `%${key}%`, `%${key}%`
+      searchKey, `%${searchKey}%`, `%${searchKey}%`
     );
     if (row && row.calories_per_100g > 0) {
-      console.log('[verify] Using DB value for', item.name, ':', row.calories_per_100g, 'vs AI:', item.calories_per_100g);
       return {
         ...item,
         name: row.food_name || item.name,
@@ -152,93 +455,154 @@ export async function verifyAndCrossCheck(item: FoodAnalysisItem): Promise<FoodA
         fat_per_100g: row.fat_per_100g || 0,
         fiber_per_100g: row.fiber_per_100g || 0,
         source: 'bundled',
+        confidence: 0.95,
       };
     }
   } catch {}
-  return item;
+  return { ...item, confidence: (item.confidence ?? 0.5) };
 }
 
 // ══════════════════════════════════════════════════════════
-//  IMAGE QUALITY VALIDATION
+//  PHASE 4: DETERMINISTIC CATEGORY AVERAGE FALLBACK
+//  (NO AI MACRO CALCULATION)
 // ══════════════════════════════════════════════════════════
 
-export async function validateFoodImage(base64: string): Promise<boolean> {
-  try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-        max_tokens: 20,
-        temperature: 0,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
-            { type: 'text', text: 'Does this image show actual physical food or a drink? Reply only: YES or NO' },
-          ],
-        }],
-      }),
-    });
-    const data = await response.json();
-    const answer = data.choices?.[0]?.message?.content?.trim().toUpperCase() || 'NO';
-    return answer.includes('YES');
-  } catch {
-    return true; // If validation call fails, proceed anyway
+const FOOD_CATEGORY_AVERAGES: Record<string, Per100g> = {
+  // Grains & Cereals
+  'rice': { cal: 130, prot: 2.7, carb: 28, fat: 0.3, fbr: 0.4 },
+  'wheat': { cal: 340, prot: 13, carb: 72, fat: 2.5, fbr: 12 },
+  'oats': { cal: 389, prot: 17, carb: 66, fat: 6.9, fbr: 10.6 },
+  'bread': { cal: 265, prot: 9, carb: 49, fat: 3.2, fbr: 2.7 },
+  'pasta': { cal: 131, prot: 5, carb: 25, fat: 1.1, fbr: 1.8 },
+
+  // Proteins
+  'chicken': { cal: 165, prot: 31, carb: 0, fat: 3.6, fbr: 0 },
+  'egg': { cal: 155, prot: 13, carb: 1.1, fat: 11, fbr: 0 },
+  'fish': { cal: 130, prot: 24, carb: 0, fat: 3, fbr: 0 },
+  'beef': { cal: 250, prot: 26, carb: 0, fat: 15, fbr: 0 },
+  'pork': { cal: 242, prot: 27, carb: 0, fat: 14, fbr: 0 },
+  'lamb': { cal: 258, prot: 25, carb: 0, fat: 16, fbr: 0 },
+  'paneer': { cal: 265, prot: 18, carb: 1.2, fat: 21, fbr: 0 },
+  'tofu': { cal: 76, prot: 8, carb: 1.9, fat: 4.8, fbr: 0.3 },
+  'lentil': { cal: 116, prot: 9, carb: 20, fat: 0.4, fbr: 8 },
+  'dal': { cal: 116, prot: 9, carb: 20, fat: 0.4, fbr: 8 },
+  'beans': { cal: 132, prot: 8.7, carb: 24, fat: 0.5, fbr: 6.4 },
+
+  // Dairy
+  'milk': { cal: 66, prot: 3.3, carb: 5, fat: 3.5, fbr: 0 },
+  'curd': { cal: 61, prot: 3.5, carb: 4.7, fat: 3.3, fbr: 0 },
+  'yogurt': { cal: 61, prot: 3.5, carb: 4.7, fat: 3.3, fbr: 0 },
+  'cheese': { cal: 402, prot: 25, carb: 1.3, fat: 33, fbr: 0 },
+  'butter': { cal: 717, prot: 0.9, carb: 0, fat: 81, fbr: 0 },
+  'ghee': { cal: 900, prot: 0, carb: 0, fat: 100, fbr: 0 },
+
+  // Indian dishes
+  'chapati': { cal: 297, prot: 8, carb: 48, fat: 8, fbr: 4.5 },
+  'roti': { cal: 297, prot: 8, carb: 48, fat: 8, fbr: 4.5 },
+  'naan': { cal: 262, prot: 8, carb: 45, fat: 5.5, fbr: 2 },
+  'paratha': { cal: 310, prot: 7, carb: 42, fat: 12, fbr: 3 },
+  'idli': { cal: 58, prot: 2, carb: 12, fat: 0.1, fbr: 0.5 },
+  'dosa': { cal: 168, prot: 4, carb: 30, fat: 3.5, fbr: 1 },
+  'vada': { cal: 170, prot: 5, carb: 22, fat: 7, fbr: 1 },
+  'samosa': { cal: 260, prot: 5, carb: 31, fat: 13, fbr: 2 },
+  'pakora': { cal: 200, prot: 5, carb: 18, fat: 12, fbr: 1.5 },
+  'puri': { cal: 280, prot: 5, carb: 40, fat: 11, fbr: 1 },
+  'biryani': { cal: 180, prot: 10, carb: 22, fat: 6, fbr: 1 },
+  'pulao': { cal: 160, prot: 4, carb: 28, fat: 4, fbr: 1 },
+  'korma': { cal: 200, prot: 15, carb: 8, fat: 12, fbr: 1 },
+  'tandoori': { cal: 190, prot: 25, carb: 3, fat: 8, fbr: 0.5 },
+  'keema': { cal: 220, prot: 18, carb: 6, fat: 14, fbr: 0.5 },
+
+  // Vegetables
+  'potato': { cal: 77, prot: 2, carb: 17, fat: 0.1, fbr: 2.2 },
+  'tomato': { cal: 18, prot: 0.9, carb: 3.9, fat: 0.2, fbr: 1.2 },
+  'onion': { cal: 40, prot: 1.1, carb: 9.3, fat: 0.1, fbr: 1.7 },
+  'carrot': { cal: 41, prot: 0.9, carb: 10, fat: 0.2, fbr: 2.8 },
+  'broccoli': { cal: 34, prot: 2.8, carb: 7, fat: 0.4, fbr: 2.6 },
+  'cauliflower': { cal: 25, prot: 1.9, carb: 5, fat: 0.3, fbr: 2 },
+  'spinach': { cal: 23, prot: 2.9, carb: 3.6, fat: 0.4, fbr: 2.2 },
+  'okra': { cal: 33, prot: 2, carb: 7, fat: 0.2, fbr: 3.2 },
+  'eggplant': { cal: 25, prot: 1, carb: 6, fat: 0.2, fbr: 3 },
+  'cabbage': { cal: 25, prot: 1.3, carb: 6, fat: 0.1, fbr: 2.5 },
+  'peas': { cal: 81, prot: 5.4, carb: 14, fat: 0.4, fbr: 5.7 },
+  'corn': { cal: 96, prot: 3.4, carb: 21, fat: 1.5, fbr: 2.4 },
+  'mushroom': { cal: 22, prot: 3.1, carb: 3.3, fat: 0.3, fbr: 1 },
+
+  // Fruits
+  'banana': { cal: 89, prot: 1.1, carb: 23, fat: 0.3, fbr: 2.6 },
+  'apple': { cal: 52, prot: 0.3, carb: 14, fat: 0.2, fbr: 2.4 },
+  'orange': { cal: 47, prot: 0.9, carb: 12, fat: 0.1, fbr: 2.4 },
+  'mango': { cal: 60, prot: 0.8, carb: 15, fat: 0.4, fbr: 1.6 },
+  'grapes': { cal: 69, prot: 0.7, carb: 18, fat: 0.2, fbr: 0.9 },
+  'watermelon': { cal: 30, prot: 0.6, carb: 7.6, fat: 0.2, fbr: 0.4 },
+
+  // Beverages
+  'tea': { cal: 1, prot: 0, carb: 0, fat: 0, fbr: 0 },
+  'coffee': { cal: 2, prot: 0.3, carb: 0, fat: 0, fbr: 0 },
+  'juice': { cal: 45, prot: 0.5, carb: 11, fat: 0.1, fbr: 0.2 },
+  'soda': { cal: 41, prot: 0, carb: 10.6, fat: 0, fbr: 0 },
+  'beer': { cal: 43, prot: 0.5, carb: 3.6, fat: 0, fbr: 0 },
+  'wine': { cal: 83, prot: 0.1, carb: 2.6, fat: 0, fbr: 0 },
+
+  // Oils & Fats
+  'oil': { cal: 884, prot: 0, carb: 0, fat: 100, fbr: 0 },
+  'olive oil': { cal: 884, prot: 0, carb: 0, fat: 100, fbr: 0 },
+
+  // Nuts & Seeds
+  'almond': { cal: 579, prot: 21, carb: 22, fat: 50, fbr: 12.5 },
+  'walnut': { cal: 654, prot: 15, carb: 14, fat: 65, fbr: 6.7 },
+  'cashew': { cal: 553, prot: 18, carb: 30, fat: 44, fbr: 3.3 },
+  'peanut': { cal: 567, prot: 26, carb: 16, fat: 49, fbr: 8.5 },
+
+  // Generic fallbacks
+  'vegetable': { cal: 30, prot: 1.5, carb: 5, fat: 0.3, fbr: 2 },
+  'fruit': { cal: 55, prot: 0.5, carb: 13, fat: 0.2, fbr: 2 },
+  'meat': { cal: 200, prot: 25, carb: 0, fat: 10, fbr: 0 },
+  'seafood': { cal: 120, prot: 22, carb: 0.5, fat: 3, fbr: 0 },
+  'soup': { cal: 40, prot: 2, carb: 5, fat: 1.5, fbr: 0.5 },
+  'salad': { cal: 25, prot: 1.5, carb: 4, fat: 0.5, fbr: 1.5 },
+  'curry': { cal: 120, prot: 8, carb: 8, fat: 6, fbr: 2 },
+  'stir fry': { cal: 100, prot: 6, carb: 8, fat: 4, fbr: 2 },
+  'fried': { cal: 250, prot: 10, carb: 20, fat: 15, fbr: 1 },
+  'dessert': { cal: 300, prot: 4, carb: 45, fat: 12, fbr: 0.5 },
+  'snack': { cal: 200, prot: 5, carb: 25, fat: 9, fbr: 1 },
+  'sauce': { cal: 80, prot: 1, carb: 6, fat: 5, fbr: 0.5 },
+  'dip': { cal: 150, prot: 2, carb: 5, fat: 14, fbr: 0.5 },
+  'beverage': { cal: 35, prot: 0.5, carb: 8, fat: 0.1, fbr: 0 },
+  'grain': { cal: 200, prot: 6, carb: 40, fat: 1.5, fbr: 3 },
+  'legume': { cal: 120, prot: 8, carb: 20, fat: 0.5, fbr: 6 },
+  'dairy': { cal: 100, prot: 5, carb: 5, fat: 6, fbr: 0 },
+};
+
+function findCategoryAverage(foodName: string): Per100g | null {
+  const lower = foodName.toLowerCase();
+  for (const [category, avg] of Object.entries(FOOD_CATEGORY_AVERAGES)) {
+    if (lower.includes(category)) return avg;
   }
+  return null;
 }
 
 // ══════════════════════════════════════════════════════════
-//  LAYER 5: Groq AI fallback for unknown foods
+//  IMAGE QUALITY SYSTEM PROMPT
 // ══════════════════════════════════════════════════════════
 
-const CALCULATE_NUTRITION_SYSTEM_PROMPT = `You are a USDA nutrition database. Return verified nutritional values PER 100G.
-Do NOT return values for the described portion — return per-100g base values.
-Reply ONLY with a JSON array, one object per food item:
-[{
-  "name": "food name only (no quantity, no cooking adjective)",
-  "grams_identified": 100,
-  "calories_per_100g": 42,
-  "protein_per_100g": 0.0,
-  "carbs_per_100g": 10.6,
-  "fat_per_100g": 0.0,
-  "fiber_per_100g": 0.0
-}]
-Use real USDA values. Common references:
-Coca-Cola: 42 kcal/100g. Wheat flour: 364 kcal/100g. Cooked rice: 130 kcal/100g.
-Chicken breast: 165 kcal/100g. Paneer: 265 kcal/100g. Egg (whole): 155 kcal/100g.
-Banana: 89 kcal/100g. Apple: 52 kcal/100g. Milk: 66 kcal/100g. Bread: 265 kcal/100g.
-Butter: 717 kcal/100g. Olive oil: 884 kcal/100g. Salmon: 208 kcal/100g.
-Dal: 116 kcal/100g. Chapati: 297 kcal/100g. Idli: 58 kcal/100g. Dosa: 168 kcal/100g.`;
+// (IMAGE_QUALITY_PROMPT is defined at top of file)
 
-async function calculateNutritionFromDescription(foodText: string): Promise<Per100g | null> {
-  try {
-    const raw = await groqChatRaw(
-      [
-        { role: 'system', content: CALCULATE_NUTRITION_SYSTEM_PROMPT },
-        { role: 'user', content: `Return per-100g nutrition for: ${foodText}` },
-      ],
-      'llama-3.3-70b-versatile',
-      300
-    );
-    const jsonStr = extractJSON(raw);
-    const parsed = JSON.parse(jsonStr);
-    const arr = Array.isArray(parsed) ? parsed : (parsed.items || [parsed]);
-    if (arr.length === 0) return null;
-    const first = arr[0];
-    return {
-      cal: Number(first.calories_per_100g) || 0,
-      prot: Number(first.protein_per_100g) || 0,
-      carb: Number(first.carbs_per_100g) || 0,
-      fat: Number(first.fat_per_100g) || 0,
-      fbr: Number(first.fiber_per_100g) || 0,
-    };
-  } catch {
-    return null;
+// ══════════════════════════════════════════════════════════
+//  LAYER 5: DETERMINISTIC FALLBACK — NO AI MACROS
+// ══════════════════════════════════════════════════════════
+
+async function categoryAverageFallback(foodName: string): Promise<Per100g | null> {
+  const avg = findCategoryAverage(foodName);
+  if (avg) return avg;
+
+  const canonical = canonicalizeFoodName(foodName).toLowerCase();
+  if (canonical !== foodName.toLowerCase()) {
+    const avg2 = findCategoryAverage(canonical);
+    if (avg2) return avg2;
   }
+
+  return null;
 }
 
 // ── FoodEntity: AI extracts ONLY this (no nutrition) ──
@@ -247,6 +611,7 @@ interface FoodEntity {
   food: string;
   quantity: number;
   unit: string;
+  confidence?: number;
 }
 
 // ── Per-food average weights for piece-based units ──
@@ -261,6 +626,8 @@ const PIECE_WEIGHTS: Record<string, number> = {
   'chicken breast': 200, 'chicken thigh': 120, 'chicken drumstick': 80,
   'paneer slice': 25, kebab: 50, kebabs: 50, tikki: 40, tikkis: 40,
   scoop: 30, scoops: 30,
+  apple: 180, banana: 120, orange: 150, mango: 200,
+  pizza: 250, 'pizza slice': 100,
 };
 
 const UNIT_TO_GRAMS: Record<string, number> = {
@@ -269,6 +636,7 @@ const UNIT_TO_GRAMS: Record<string, number> = {
   cup: 240, cups: 240, tbsp: 15, tablespoon: 15, tablespoons: 15,
   tsp: 5, teaspoon: 5, teaspoons: 5, bowl: 250, bowls: 250,
   plate: 300, plates: 300, glass: 200, glasses: 200,
+  bottle: 500, bottles: 500, can: 330, cans: 330,
 };
 
 // ── Helpers ──
@@ -313,12 +681,12 @@ export async function preprocessImage(uri: string): Promise<string> {
 //  STEP 1: AI Entity Extraction — NO NUTRITION COMPUTATION
 // ══════════════════════════════════════════════════════════
 
-const ENTITY_EXTRACT_SYSTEM_PROMPT = `You extract food entities from user input.
+const ENTITY_EXTRACT_SYSTEM_PROMPT = `You extract ONLY food entities from user input.
+CRITICAL: Do NOT calculate calories, protein, carbs, or any nutrition.
 Return ONLY valid JSON array — no markdown, no other text.
 Each object: {"food":"string","quantity":number,"unit":"string"}
-Valid units: g, ml, kg, cup, tbsp, tsp, piece, slice, bowl, glass, oz, lb
-Do NOT calculate calories or any nutrition.
-Extract quantities exactly as written.
+Valid units: g, ml, kg, cup, tbsp, tsp, piece, slice, bowl, glass, oz, lb, can, bottle
+Extract quantities exactly as written. If no quantity given, use 1.
 
 Examples:
 Input: "100g oats" → [{"food":"oats","quantity":100,"unit":"g"}]
@@ -326,17 +694,19 @@ Input: "5 eggs and 100g rice" → [{"food":"eggs","quantity":5,"unit":"piece"},{
 Input: "2 slices bread with peanut butter" → [{"food":"bread","quantity":2,"unit":"slice"},{"food":"peanut butter","quantity":1,"unit":"tbsp"}]
 Input: "1 cup dal and 2 roti" → [{"food":"dal","quantity":1,"unit":"cup"},{"food":"roti","quantity":2,"unit":"piece"}]`;
 
-const IMAGE_ENTITY_EXTRACT_SYSTEM_PROMPT = `You are a food vision expert. Identify every distinct food item in the image.
-For each item, estimate:
-- The exact food name (no brand names, just the food)
-- The estimated weight in grams based on visual portion size
+const IMAGE_ENTITY_EXTRACT_SYSTEM_PROMPT = `You identify every distinct food item in the image.
+CRITICAL: Do NOT calculate calories, protein, carbs, or any nutrition.
+For each item, estimate the food name and portion size in grams.
 Reply ONLY with a JSON array, no markdown, no other text:
 [{"food":"Cooked White Rice","grams":200},{"food":"Grilled Chicken Breast","grams":150}]
-Be specific about cooking method. Estimate grams based on:
-  - A standard dinner plate = 20-25cm diameter
-  - A bowl of rice ≈ 200g
-  - A chicken breast ≈ 150-200g
-  - A can of Coca-Cola = 330ml = 330g`;
+Be specific about food type and cooking method.
+Estimate grams based on visual portion size using:
+- A standard dinner plate = 20-25cm diameter
+- A bowl of rice ≈ 200g
+- A chicken breast ≈ 150-200g
+- A can of Coca-Cola = 330ml = 330g
+- A slice of pizza = 100g
+- A glass of water = 200ml`;
 
 async function extractEntitiesFromText(input: string): Promise<FoodEntity[]> {
   const raw = await groqChatRaw(
@@ -357,7 +727,7 @@ async function extractEntitiesFromText(input: string): Promise<FoodEntity[]> {
   })).filter((e: { food: string }) => e.food.length > 0);
 }
 
-async function extractEntitiesFromImage(base64: string): Promise<{ name: string; portionGrams: number }[]> {
+async function extractEntitiesFromImage(base64: string): Promise<{ name: string; portionGrams: number; confidence: number }[]> {
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -374,7 +744,7 @@ async function extractEntitiesFromImage(base64: string): Promise<{ name: string;
           role: 'user',
           content: [
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
-            { type: 'text', text: 'Identify all food items and estimate their portion grams.' },
+            { type: 'text', text: 'Identify all food items and estimate portion grams. No nutrition values.' },
           ],
         },
       ],
@@ -391,6 +761,7 @@ async function extractEntitiesFromImage(base64: string): Promise<{ name: string;
   return items.map((i: any) => ({
     name: String(i.food || i.name || 'food').trim(),
     portionGrams: Number(i.grams || i.portionGrams) || 100,
+    confidence: Number(i.confidence ?? i.confidence_score ?? 0.7),
   })).filter((i: { name: string }) => i.name.length > 0);
 }
 
@@ -407,9 +778,11 @@ function entityToGrams(entity: FoodEntity): number {
     for (const [key, weight] of Object.entries(PIECE_WEIGHTS)) {
       if (foodKey.includes(key)) return qty * weight;
     }
-    return qty * 50; // default ~50g per piece
+    return qty * 50;
   }
 
+  if (unit === 'can' || unit === 'cans') return qty * 330;
+  if (unit === 'bottle' || unit === 'bottles') return qty * 500;
   if (unit === 'bowl' || unit === 'bowls') return qty * 250;
   if (unit === 'plate' || unit === 'plates') return qty * 300;
   if (unit === 'glass' || unit === 'glasses') return qty * 200;
@@ -419,8 +792,8 @@ function entityToGrams(entity: FoodEntity): number {
   if (unit === 'kg') return qty * 1000;
   if (unit === 'oz' || unit === 'ounce' || unit === 'ounces') return qty * 28.35;
   if (unit === 'lb' || unit === 'pound' || unit === 'pounds') return qty * 453.6;
-  if (unit === 'ml') return qty; // 1ml ≈ 1g for water-density
-  return qty; // assume grams
+  if (unit === 'ml') return qty;
+  return qty;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -438,12 +811,18 @@ interface Per100g {
 async function lookupPer100g(foodName: string): Promise<Per100g | null> {
   const key = foodName.toLowerCase().trim();
   const normalizedKey = key.replace(/[-–—]/g, ' ');
+  const canonicalKey = canonicalizeFoodName(key).toLowerCase();
   try {
     const db = await getDb();
     await seedFoodCache();
     let row = await db.getFirstAsync<any>(
       'SELECT * FROM food_cache WHERE LOWER(food_name) = ?', key
     );
+    if (!row && canonicalKey !== key) {
+      row = await db.getFirstAsync<any>(
+        'SELECT * FROM food_cache WHERE LOWER(food_name) = ?', canonicalKey
+      );
+    }
     if (!row) {
       row = await db.getFirstAsync<any>(
         'SELECT * FROM food_cache WHERE LOWER(food_name) LIKE ? OR aliases LIKE ?',
@@ -500,6 +879,9 @@ const KNOWN_DENSITY_RANGES: Record<string, { maxKcalPer100g: number; maxProteinP
   banana: { maxKcalPer100g: 100, maxProteinPer100g: 1.5, maxCarbsPer100g: 25, maxFatPer100g: 0.5 },
   apple: { maxKcalPer100g: 60, maxProteinPer100g: 0.5, maxCarbsPer100g: 15, maxFatPer100g: 0.5 },
   bread: { maxKcalPer100g: 280, maxProteinPer100g: 10, maxCarbsPer100g: 55, maxFatPer100g: 5 },
+  paneer: { maxKcalPer100g: 300, maxProteinPer100g: 20, maxCarbsPer100g: 5, maxFatPer100g: 25 },
+  butter: { maxKcalPer100g: 750, maxProteinPer100g: 1, maxCarbsPer100g: 1, maxFatPer100g: 85 },
+  ghee: { maxKcalPer100g: 900, maxProteinPer100g: 0, maxCarbsPer100g: 0, maxFatPer100g: 100 },
 };
 
 function validateMacros(per100g: Per100g, grams: number, foodName: string): Per100g {
@@ -534,7 +916,6 @@ function validateMacros(per100g: Per100g, grams: number, foodName: string): Per1
     return clamped;
   }
 
-  // Generic sanity checks for unknown foods
   const clamped: Per100g = { ...per100g };
   if (clamped.cal > 900) { clamped.cal = 900; }
   if (clamped.prot > 100) { clamped.prot = 100; }
@@ -599,7 +980,6 @@ async function processEntity(entity: FoodEntity, userId: string, debug: any[]): 
     return toFoodItem(foodName, scaled, grams);
   }
 
-  // Fallback: if DB has no exact match, use entity quantity * 100g default lookup
   const db = await getDb();
   await seedFoodCache();
   const like = await db.getFirstAsync<any>(
@@ -620,16 +1000,16 @@ async function processEntity(entity: FoodEntity, userId: string, debug: any[]): 
     return toFoodItem(foodName, scaled, grams);
   }
 
-  // Layer 5: Groq AI fallback
-  const aiResult = await calculateNutritionFromDescription(foodName);
-  if (aiResult && aiResult.cal > 0) {
-    const validated = validateMacros(aiResult, grams, foodName);
+  // Layer 5: Deterministic category average fallback — NO AI MACROS
+  const categoryAvg = await categoryAverageFallback(foodName);
+  if (categoryAvg && categoryAvg.cal > 0) {
+    const validated = validateMacros(categoryAvg, grams, foodName);
     const scaled = scalePer100g(validated, grams);
-    debug.push({ food: foodName, grams, ai: aiResult, validated, scaled, source: 'ai_fallback' });
+    debug.push({ food: foodName, grams, category: categoryAvg, validated, scaled, source: 'category_fallback' });
     return toFoodItem(foodName, scaled, grams);
   }
 
-  // Last resort: use known density ranges for estimation
+  // Last resort: generic estimate
   const estimated: Per100g = { cal: 200, prot: 10, carb: 20, fat: 8, fbr: 2 };
   const validated = validateMacros(estimated, grams, foodName);
   const scaled = scalePer100g(validated, grams);
@@ -650,12 +1030,11 @@ export async function analyzeFood(input: {
   const debug: any[] = [];
 
   if (input.imageBase64) {
-    // Image → AI entity extract + deterministic scaling
     try {
       const entities = await extractEntitiesFromImage(input.imageBase64);
       const items: FoodItem[] = [];
       for (const e of entities) {
-        const item = await processEntity({ food: e.name, quantity: e.portionGrams, unit: 'g' }, input.userId, debug);
+        const item = await processEntity({ food: e.name, quantity: e.portionGrams, unit: 'g', confidence: e.confidence }, input.userId, debug);
         if (item) items.push(item);
       }
       console.log('[nutritionAI] debug:', JSON.stringify(debug));
@@ -678,7 +1057,6 @@ export async function analyzeFood(input: {
     throw new Error(safetyResult.fallbackMessage || 'Input could not be processed safely.');
   }
 
-  // Try AI entity extraction first
   let entities: FoodEntity[] = [];
   try {
     entities = await extractEntitiesFromText(rawText);
@@ -687,7 +1065,6 @@ export async function analyzeFood(input: {
     console.warn('[nutritionAI] AI entity extraction failed, using regex parser');
   }
 
-  // Fallback to deterministic regex parser if AI fails
   if (!entities || entities.length === 0) {
     entities = parseInput(rawText).map(p => ({
       food: p.food_key,
@@ -697,7 +1074,6 @@ export async function analyzeFood(input: {
     console.log('[nutritionAI] Regex parsed entities:', JSON.stringify(entities));
   }
 
-  // Process each entity deterministically
   const items: FoodItem[] = [];
   for (const entity of entities) {
     if (!entity.food.trim()) continue;
@@ -723,6 +1099,12 @@ export async function analyzeFood(input: {
 
 export async function analyzeImageWithAI(uri: string, userId?: string): Promise<AnalysisResult> {
   const base64 = await preprocessImage(uri);
+
+  const quality = await analyzeImageQuality(base64);
+  if (!quality.valid) {
+    throw new Error('No food detected. Please take a photo of actual food or use barcode scan.');
+  }
+
   const entities = await extractEntitiesFromImage(base64);
   if (!entities || entities.length === 0) {
     throw new Error('No food detected in the image. Try a clearer photo with better lighting.');
@@ -734,7 +1116,7 @@ export async function analyzeImageWithAI(uri: string, userId?: string): Promise<
   for (const e of entities) {
     let foodItem: FoodItem | null = null;
     try {
-      const entity: FoodEntity = { food: e.name, quantity: e.portionGrams, unit: 'g' };
+      const entity: FoodEntity = { food: e.name, quantity: e.portionGrams, unit: 'g', confidence: e.confidence };
       const debug: any[] = [];
       foodItem = await processEntity(entity, userId || '', debug);
     } catch (err) {
@@ -752,6 +1134,7 @@ export async function analyzeImageWithAI(uri: string, userId?: string): Promise<
         fat_per_100g: Math.round(foodItem.fat * ratio * 10) / 10,
         fiber_per_100g: Math.round(foodItem.fiber * ratio * 10) / 10,
         source: 'bundled',
+        confidence: e.confidence,
       });
     } else {
       items.push({
@@ -762,7 +1145,8 @@ export async function analyzeImageWithAI(uri: string, userId?: string): Promise<
         carbs_per_100g: 20,
         fat_per_100g: 8,
         fiber_per_100g: 2,
-        source: 'ai',
+        source: 'ai_vision',
+        confidence: e.confidence,
       });
     }
     descriptions.push(`${e.name} (${e.portionGrams}g)`);
@@ -770,7 +1154,6 @@ export async function analyzeImageWithAI(uri: string, userId?: string): Promise<
 
   const aiDescription = descriptions.join(', ');
 
-  // Validate totals
   const totalGrams = items.reduce((s, i) => s + i.grams, 0);
   const totalCal = items.reduce((s, i) => s + Math.round(i.calories_per_100g * i.grams / 100), 0);
   const totalProt = Math.round(items.reduce((s, i) => s + i.protein_per_100g * i.grams / 100, 0) * 10) / 10;
@@ -781,7 +1164,6 @@ export async function analyzeImageWithAI(uri: string, userId?: string): Promise<
     console.warn('[nutritionAI] Image validation warnings:', validation.warnings);
   }
 
-  // Cache items
   if (userId) {
     for (const item of items) {
       try {
@@ -801,13 +1183,12 @@ export async function analyzeImageWithAI(uri: string, userId?: string): Promise<
     await saveScanToCache(uri, userId, aiDescription, totalCal);
   }
 
-  // Verify & cross-check each item against DB
   for (let i = 0; i < items.length; i++) {
     items[i] = await verifyAndCrossCheck(items[i]);
     items[i] = { ...items[i], name: canonicalizeFoodName(items[i].name) };
   }
 
-  return { items, ai_description: cleanAIDescription(aiDescription) };
+  return { items, ai_description: cleanAIDescription(aiDescription), imageQuality: quality };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -831,7 +1212,7 @@ const IGNORE_WORDS = new Set([
 const UNIT_WORDS = new Set([
   'cup', 'cups', 'tbsp', 'tablespoon', 'tablespoons', 'tsp', 'teaspoon',
   'teaspoons', 'g', 'gram', 'grams', 'kg', 'ml', 'oz', 'ounce', 'ounces',
-  'lb', 'pound', 'pounds', 'piece', 'pieces', 'slice', 'slices',
+  'lb', 'pound', 'pounds', 'piece', 'pieces', 'slice', 'slices', 'can', 'cans', 'bottle', 'bottles',
 ]);
 
 export interface ParsedFoodItem {
@@ -870,14 +1251,13 @@ function parseSingleFood(text: string): ParsedFoodItem {
 function parseInput(input: string): ParsedFoodItem[] {
   const raw = input.toLowerCase().trim();
   if (!raw) return [{ quantity: 1, unit: null, food_key: '' }];
-  // Split on commas and "and" to handle: "180g rice, 100g chicken and 60g paneer"
   const parts = raw.split(/\s*,\s*|\s+and\s+/).filter(Boolean);
   if (parts.length === 0) return [{ quantity: 1, unit: null, food_key: raw }];
   return parts.map(part => parseSingleFood(part.trim()));
 }
 
 // ══════════════════════════════════════════════════════════
-//  DB helpers (unchanged)
+//  DB helpers
 // ══════════════════════════════════════════════════════════
 
 let seedPromise: Promise<void> | null = null;
@@ -986,8 +1366,6 @@ async function saveToUserHistory(userId: string, fd: FoodResult): Promise<void> 
   } catch {}
 }
 
-// ── Image Scan Caching ──
-
 export async function saveScanToCache(uri: string, userId: string | undefined, foodName: string, calories: number) {
   try {
     const db = await getDb();
@@ -1008,8 +1386,6 @@ export async function getRecentScans(userId: string, limit = 10) {
   } catch { return []; }
 }
 
-// ── Backward-compatible aliases ──
-
 export async function parseFoodInput(description: string): Promise<MealLog> {
   const userId = '';
   return analyzeFood({ text: description, userId });
@@ -1018,8 +1394,6 @@ export async function parseFoodInput(description: string): Promise<MealLog> {
 export async function analyzeFoodImage(imageUrl: string): Promise<MealLog> {
   return analyzeFood({ imageBase64: imageUrl, userId: '' });
 }
-
-// ── getMealSuggestion ──
 
 export async function getMealSuggestion(
   remainingCalories: number,
@@ -1048,3 +1422,5 @@ Prefer Indian food options but include variety.`;
     return 'Try a balanced meal with lean protein, complex carbs, and healthy fats. For example: grilled chicken with quinoa and roasted vegetables.';
   }
 }
+
+export { analyzeImageQuality };
