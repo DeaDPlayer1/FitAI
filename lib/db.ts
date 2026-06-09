@@ -107,6 +107,10 @@ async function initTables() {
       scanned_at TEXT NOT NULL,
       source TEXT DEFAULT 'open_food_facts'
     );
+    CREATE TABLE IF NOT EXISTS _meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
     `);
   // ── Migrate existing food_cache table to add barcode columns ──
   try {
@@ -123,6 +127,25 @@ async function initTables() {
   } catch {}
   try {
     await db.execAsync(`ALTER TABLE food_cache ADD COLUMN sodium_per_100g REAL DEFAULT 0`);
+  } catch {}
+  // ── Migration v2: purge stale AI cache entries with wrong per-100g values ──
+  try {
+    const meta = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM _meta WHERE key = 'cache_schema_version'"
+    );
+    if (!meta || parseInt(meta.value) < 2) {
+      await db.runAsync("DELETE FROM food_cache WHERE source NOT IN ('bundled')");
+      await db.runAsync(
+        "INSERT OR REPLACE INTO _meta (key, value) VALUES ('cache_schema_version', '2')"
+      );
+    }
+  } catch {}
+  // ── Migration v3: add last_grams_used and last_meal_type to user_food_history ──
+  try {
+    await db.execAsync(`ALTER TABLE user_food_history ADD COLUMN last_grams_used REAL DEFAULT 100`);
+  } catch {}
+  try {
+    await db.execAsync(`ALTER TABLE user_food_history ADD COLUMN last_meal_type TEXT DEFAULT 'snack'`);
   } catch {}
 }
 

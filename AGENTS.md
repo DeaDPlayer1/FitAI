@@ -1,115 +1,99 @@
 # Pulse AI — Session Summary
 
 ## Goal
-Implement the full Pulse AI architecture: memory layer, safety pipeline, specialized sub-agents.
+- Fix navigation, key, and food-recognition errors; expand food database to 1000+ items; rebuild the nutrition scaling engine to properly handle serving sizes, units, and proportional macro calculation across camera, barcode, and text food logging.
 
 ## Constraints & Preferences
-- Use existing light/purple theme (`constants/theme.ts`) — do not create a new design system or the app will crash
-- React Native + TypeScript, Expo Router, Zustand stores, Supabase backend, SQLite (expo-sqlite)
-- All new code must compile against strict TypeScript config
-- Any database changes require a SQL query the user can paste into Supabase SQL editor
+- Use exact Indian dish names in AI prompts (not generic descriptions)
+- Database must cover Indian regional cuisines + all major world cuisines
+- No duplicate keys in rendered lists
+- Groq vision model: `meta-llama/llama-4-scout-17b-16e-instruct`
+- Groq text model: `llama-3.3-70b-versatile`
+- Nutrition model must use `scaleFactor = selectedAmount / baseServingAmount` (not gram-conversion fallbacks that cause exponential inflation)
+- Unit selector must be dynamic based on food type (liquids → ml/cans/bottles; solids → g/cups/bowls/pieces)
 
 ## Progress
 ### Done
-- **3 phases complete:**
-  1. **Safety + States + Memory** — 9-state adaptive machine, 40+ safety rules, 7-step pipeline, Supabase memory schema (5 tables), Zustand memory store with AsyncStorage persistence
-  2. **Hub + Welcome + ChatBubble** — Pulse AI onboarding (3-slide welcome), ChatHubCard, ChatBubble with gradient/checklist/TypewriterText
-  3. **Full Chat Experience** — SQLite persistence (`lib/db.ts` with conversations + messages tables, 7 exported functions), custom MarkdownText renderer, purple gradient AI bubbles, user avatars, timestamps, custom BottomSheet, animated typing dots, SQLite-backed drawer, suggestions BottomSheet
-- **All dependency issues resolved**: Removed `react-native-markdown-display` + `@gorhom/bottom-sheet` — replaced with custom components
-- **Reanimated warnings fixed**: Removed all `.value` reads from render path
-- **Zero TS errors in all modified files** — pre-existing ~47 errors only in `log-food.tsx`, `active.tsx`, `StatWidget.tsx`, etc.
-- **Phase 4 Complete:** Sub-agent prompts (8), orchestrator, safety integration, memory service, updated `lib/aiTrainer.ts` async context, extended migration SQL
-- **Phase 5 Complete (AI Trainer Mode):**
-  - **5a — State Management**: `store/aiTrainerStore.ts` (Zustand + AsyncStorage persistence), `lib/aiTrainerPlanManager.ts` (SQLite CRUD for plans/reviews), `constants/aiTrainerStates.ts` (phase types, safety floors), `lib/aiTrainer.ts` types (`ActivePlan`, `AiTrainerPhase`)
-  - **5b — Weekly Review Engine**: `lib/weeklyReviewEngine.ts` (algorithmic analysis: adherence, e1RM trends, weight rate, calorie adjustment rules, flare detection, diet break logic, CKD/lupus safety clamps), `lib/e1rmCalculator.ts` (Brzycki + Epley averaged 1RM estimation)
-  - **5c — Progress Charts**: `components/ui/StrengthChart.tsx` (multi-line SVG e1RM chart), `CalorieChart.tsx` (bar chart with target line + animated bars), `WeightChart.tsx` (line chart with target corridor shading), `WeeklyReviewCard.tsx` (combined card with adherence ring + charts + adjustments)
-  - **5d — "Use This" Flow**: `app/modals/confirm-plan.tsx` (plan review/edit/apply screen), `app/modals/weekly-review.tsx` (weekly review with charts + apply/dismiss), updated `app/(tabs)/train.tsx` ("Use This" button on plan messages), updated `app/_layout.tsx` (modal registration)
-  - **5e — Session + Symptom Logging**: `components/ui/PostWorkoutRPE.tsx` (RPE/soreness/fatigue sliders), `components/ui/DailyWellnessCheckin.tsx` (mood, energy, stress, joint pain, medication adherence for lupus/CKD)
-  - **5f — Notifications**: `lib/aiTrainerNotifications.ts` (expo-notifications scheduling: weekly review, morning check-in, post-workout, missed session, diet break)
-  - **5g — Supabase Migration**: `supabase/migrations/20260527_ai_trainer_schema.sql` (3 new tables + RLS + ALTER TABLE extensions)
-- **All new files compile with zero TypeScript errors**
+- **GO_BACK navigation error**: `FloatingTabBar.tsx:58` changed `goBack()` → `navigate('index')`; `coach.tsx:409` changed `router.back()` → `router.navigate('/(ai-trainer)')`
+- **Duplicate key error**: `BarcodeResultScreen.tsx` changed `key={q.value}` → `key={q.label}`
+- **Food database expanded to 1001 items**: Batch 2 (+241), Batch 3 (+107), Batch 4 (+46), Batch 5 (+16), manual (+3) — all scripts in `scripts/`
+- **`lib/nutritionAI.ts` prompts rewritten for Indian cuisine**: `identifyFoodFromImage`, `calculateNutritionFromDescription`, DB cross-reference after vision, Layer 5 fallback with Indian-cuisine-aware values
+- **Camera → 1 Groq call (merged)**: Replaced 2-call pipeline (`identifyFoodFromImage` → `calculateNutritionFromDescription`) with single `analyzeImageSingleCall` returning structured JSON (per-100g values + detected portion size)
+- **Multi-food DB matching**: Each AI-detected item matched against `food_cache` via `lookupRawPer100g()`; cached per-100g values replace AI estimates
+- **Reference card/coin overlay**: Added credit card + coin outlines in `camera-capture.tsx` camera view as portion scale reference
+- **Image caching**: Added `food_scans` table in `db.ts`; `saveScanToCache()`/`getRecentScans()` in `nutritionAI.ts` persist scan URIs + food name + calories to SQLite
+- **On-device classifier removed from camera path**: Broken TF.js MobileNet model (`tf.loadGraphModel` fails with `"Cannot read property 'producer' of undefined"`) removed from camera analysis path — kept only for text fallback
+- **Nutrition scaling engine fix**: `lib/nutritionScale.ts`, `screens/FoodConfirmScreen.tsx` — complete overhaul to fix 455 kcal / 115.5g carbs bug (system now uses scaleFactor = selectedAmount / baseServingAmount, no double-inflation)
+- **Metro cache cleared**: `npx expo start --clear` resolved `lightningcss-darwin-x64` watch error
 
 ### In Progress
-- (none — all Phase 5 components complete)
+- (none)
 
 ### Blocked
 - (none)
 
 ## Key Decisions
-- Sub-agent prompts are modular constants (no runtime loading) — swapped in at build time via orchestrator
-- Orchestrator uses simple keyword scoring (no ML classifier required) — adequate for fitness domain routing
-- Safety pipeline is MANDATORY — integrated into `getCoachResponse()`, cannot be bypassed
-- Memory service is local-first (SQLite) with Supabase sync via `syncRecoveryDays`/`syncExerciseProgress`
-- `buildCoachContext()` changed from sync to async — all callers updated
+- `router.back()` / `navigation.goBack()` replaced with explicit `navigate('/index')` or `navigate('/(ai-trainer)')` because tab navigators have no history to pop
+- Food database expansion uses Python scripts that check `existing_names` set to avoid duplicates
+- AI prompts explicitly enumerate Indian dishes rather than relying on model's inherent knowledge
+- On-device TF.js classifier removed from camera path (broken model URL, poor ImageNet-only coverage, no Indian food support; Groq vision is superior)
+- Nutrition scaling uses direct ratio formula `scaleFactor = selectedAmount / baseServingAmount` instead of gram-conversion-with-fallbacks to prevent exponential macro inflation
+- `UNIT_META.gramsPerUnit` added for all count-based units (can: 330g, bottle: 500g, piece: 100g, etc.) so cross-category conversions (e.g., `can → ml`) work via gram bridge
+- `scaleNutrition()` uses category-aware logic: same-unit → direct ratio; target count-based → ratio=quantity (1 count = 1 base serving); else → gram conversion via gramsPerUnit
+- `detectServingUnit()` prioritizes container words (can, bottle, bowl, cup) over bare ml/g numeric patterns
+- `getAvailableUnits()` always includes baseUnit in the returned list
 
-## Critical Context
-- TypeScript compiles with zero errors in all new/modified files; pre-existing errors in `log-food.tsx`, `active.tsx`, `StatWidget.tsx`, `AnimatedProgressBar.tsx`, `BottomTabBar.tsx`, `SkeletonLoader.tsx` are unrelated
-- The `~47 pre-existing TS errors` are all `StyleProp<TextStyle>` / `StyleProp<ViewStyle>` type incompatibilities
-- Current total Pulse AI files: 8 sub-agent prompt files, 3 new service files, 1 updated integration file, 1 updated screen file
+## Nutrition Scaling Architecture
 
----
+### Core Formula
+```
+scaleFactor = selectedAmount / baseServingAmount
+scaledCalories = baseCalories × scaleFactor
+```
 
-## FitAI UI Revamp v3.0 (Latest Work)
+### Category Rules (`scaleNutrition()`)
+1. **Same unit** (e.g., 'can' → 'can'): `ratio = quantity / baseServingValue`
+2. **Target is count-based** (e.g., base='ml' → target='serving'): `ratio = quantity`
+   - 1 count unit = 1 base serving = `baseServingValue` of base unit
+   - Example: 330ml base, 1 serving = 330ml → ratio = 1
+3. **Base is count-based** (e.g., base='can' → target='ml'): convert both to grams
+   - 1 can = 330g (from gramsPerUnit), 500ml = 500g → ratio = 500/330
+4. **Both weight/volume** (e.g., 'g' → 'cup'): convert both to grams
 
-### Goal
-Apply soft-premium fintech aesthetic to fitness app: floating cards on gradient heroes, soft palette, clean typography. No new design system — extend `constants/theme.ts`.
+### Data Flow
+```
+Camera/Gallery → Groq vision → {calories: total, servingGrams, serving: "1 can (330ml)"}
+                                     ↓
+Barcode → Open Food Facts/USDA → per-100g values + serving_size
+                                     ↓
+FoodConfirmScreen → parseServingString("1 can (330ml)") → {value:1, unit:'can'}
+                         ↓
+               BaseNutrition {baseServingValue:1, baseServingUnit:'can', calories:140}
+                         ↓
+               ServingSizeEditor → scaleNutrition(base, quantity, unit) → ScaledNutrition
+                         ↓
+               Log to meal_logs (scaled.calories, scaled.protein_g, etc.)
+```
 
-### Design Tokens (theme.ts)
-- Primary `#6A49FA` (purple), deep `#453284`, bg `#F6F5FB`, surface white, shadow `rgba(0,0,0,0.06)`
-- Gradients: `hero`, `heroSoft`, `heroSkyBlue`, `heroPink`, `heroSuccess`, `heroWarning`, `cardGlow`, insight gradients
-- Spacing: 4/8/12/16/20/24/32/40. Radius: 8/12/16/20/24/9999
-- Font: Inter, sizes micro/caption/body/bodyMed/title/h3/h2/h1/display + legacy xs/sm/md/lg/xl/xxl/xxxl/hero/mega
-- Shadow: card / soft / float / hero / button / orange / green / + onPrimary variants
-- All legacy aliases preserved (`COLORS`, `BACKGROUND`, `TEXT`, `SPACING`, `RADIUS`, `FONT_SIZE`, `SHADOW`, `theme.text`, `theme.accent.*Soft`, `theme.bg.*Tint`)
-
-### New Components (components/ui/)
-- `OverlapCard.tsx`, `GradientButton.tsx`, `StatPill.tsx`, `SectionHeader.tsx`, `SoftInput.tsx`
-- `PulseDot.tsx`, `ProgressRingV2.tsx`, `FloatingCard.tsx`, `InsightCard.tsx`, `MacroBar.tsx`
-- `AIResponseCard.tsx`, `TimelineItem.tsx`, `DayStrip.tsx`, `FloatingTabBar.tsx`, `HeroSection.tsx`
-- `QuickActionPill.tsx`, `DotsIndicator.tsx`, `ExerciseRow.tsx`, `AvatarCircle.tsx`, `HorizontalPager.tsx`
-
-### Rewritten Screens
-- `app/(tabs)/index.tsx` — Home Dashboard (hero + overlap stats + quick actions + today's plan + AI insights + nutrition + training split)
-- `app/(ai-trainer)/index.tsx` — AI Trainer Home
-- `app/(ai-trainer)/coach.tsx` — AI Coach (gradient hero + conversation bubbles + input bar)
-- `app/(ai-trainer)/train.tsx` — Training (hero + stats + today's workout + week strip + day cards + strategy)
-- `app/(tabs)/food.tsx` — gradient hero + overlapping calorie card
-- `app/(tabs)/profile.tsx` — gradient hero + overlap stats
-- `app/workout/active.tsx` — dark focus mode (#1B1B1F bg, white text, purple accents)
-
-### Final TS Status
-- Total errors: 110 (down from 121 after adding legacy aliases)
-- All v3-introduced errors in new/modified files: ZERO
-- Pre-existing errors untouched: log-food.tsx (48), StatCard/PrimaryButton/WeeklySplitCard/WorkoutCard/WorkoutExerciseRow (uses pre-v3 theme shape), workout/active.tsx sectionName + startWorkout args, auth/sync/groq/analytics/scratch, etc.
-- These are all in files outside the v3 scope and were already broken before the revamp
-
-### Known Regressions Mitigated
-- Added back `theme.colors.card`, `theme.colors.orange`, `theme.colors.shadow` (string), `theme.font.size.xs/sm/md/lg/xl/xxl/xxxl`
-- Added `FONT_SIZE` legacy aliases (xs/sm/md/lg/xl/xxl/xxxl/hero/mega)
-- Removed duplicate `success/warning/danger/orange` keys in colors
-- FloatingCard `style` prop widened to `ViewStyle | ViewStyle[]`
-- Removed duplicate `settingsBtn/section/sectionTitle` in profile.tsx
-
-### Out of Scope / Not Wired
-- `StatPill` supports 9 tint variants (purple/success/warning/danger/blue/sky/pink/neutral/glass)
-- FloatingTabBar IS wired in both `app/(tabs)/_layout.tsx` and `app/(ai-trainer)/_layout.tsx`; old `TabBar` component kept in `components/ui/TabBar.tsx` for backward compat
-- FloatingTabBar TAB_CONFIG has entries: index, train, coach (highlighted), food, nutrition, profile, progress, workout, stats, ai-dashboard
-- FloatingTabBar auto-hides on `coach` screen (full-screen chat UX)
-
+### Edge Cases Handled
+- AI returns `{calories: 140, serving: "1 can (330ml)", servingGrams: 330}` → unit='can', value=1, calories=140
+- AI returns `{calories: 140, serving: "Coca-Cola (330g)", servingGrams: 330}` → unit='g', value=330, calories=140
+- Barcode returns `per100g={cal:42}, serving: "330ml"` → unit='ml', value=330, ratio=3.3 → 140 cal
+- User switches 330ml → 500ml → ratio=500/330 → 212 cal
+- User switches 1 can → 2 cans → ratio=2 → 280 cal
+- User switches 1 can → 1/2 can → ratio=0.5 → 70 cal
 
 ## Relevant Files
-- `constants/prompts/workoutCoach.ts` — Workout periodization + exercise prescription specialist
-- `constants/prompts/nutritionAI.ts` — Sports nutrition + condition-specific dietary rules
-- `constants/prompts/recoveryAI.ts` — Recovery quantification + fatigue management
-- `constants/prompts/healthAwareAI.ts` — Medical context integration + medication interactions
-- `constants/prompts/habitCoach.ts` — Behavior change frameworks (Fogg, SDT, COM-B, Stages of Change)
-- `constants/prompts/motivationAI.ts` — Psychological support + cognitive reframing
-- `constants/prompts/weeklyReportAI.ts` — Data synthesis + weekly summary structure
-- `constants/prompts/progressionAI.ts` — Long-term periodization + mesocycle/macrocycle design
-- `lib/subAgentOrchestrator.ts` — Intent classifier, sub-agent router, context builder
-- `lib/safetyIntegration.ts` — Mandatory safety pipeline wrapper
-- `lib/memoryService.ts` — SQLite CRUD for 5 entities + context builder + Supabase sync
-- `lib/aiTrainer.ts` — Updated async `buildCoachContext`, integrated `getCoachResponse`
-- `lib/safetyEngine.ts` — 7-step validation pipeline (unchanged)
-- `app/(tabs)/train.tsx` — Passes userId, removed dead import
-- `supabase/migrations/20260526_memory_schema_ext.sql` — Extended migration SQL (5 tables + RLS)
+- `lib/nutritionScale.ts` — Core scaling engine: `scaleNutrition()`, `estimateBaseNutrition()`, `parseServingString()`, `detectServingUnit()`, `getAvailableUnits()`, `getServingPresets()`, `UNIT_META`
+- `screens/FoodConfirmScreen.tsx` — Camera/gallery/voice food confirmation with unit detection
+- `screens/BarcodeResultScreen.tsx` — Barcode scan result with per-100g → serving scaling
+- `lib/barcodeService.ts` — Open Food Facts + USDA lookup, `parseServingGrams()`
+- `lib/nutritionAI.ts` — AI pipeline: Groq vision, DB matching, image caching
+- `components/ui/ServingSizeEditor.tsx` — Interactive serving size UI with presets, unit selector, live macro preview
+- `components/ui/FloatingTabBar.tsx:58` — `goBack()` → `navigate('index')` fix
+- `app/(ai-trainer)/coach.tsx:409` — `router.back()` → `router.navigate('/(ai-trainer)')` fix
+- `app/modals/camera-capture.tsx` — Camera view with reference card/coin overlay
+- `lib/db.ts` — SQLite schema: `food_cache`, `food_scans` tables
+
+## Pre-existing TS Errors (unchanged)
+- `constants/exercises.ts(121-128)`: 8 errors — `"Cardio"` not assignable to `"Compound" | "Isolation"`

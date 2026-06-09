@@ -7,7 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { theme } from '@/constants/theme';
 import { useUserStore } from '@/store/userStore';
-import { analyzeImageWithAI, saveScanToCache } from '@/lib/nutritionAI';
+import { analyzeImageWithAI } from '@/lib/nutritionAI';
 
 type UIState = 'idle' | 'capturing' | 'processing';
 
@@ -52,20 +52,12 @@ export default function CameraCaptureModal() {
       setUIState('processing');
 
       const result = await analyzeImageWithAI(uri, user?.id);
-      saveScanToCache(uri, user?.id, result.name, result.calories);
       (router as any).replace({
         pathname: '/modals/confirm-food',
         params: {
           imageUri: uri,
           aiDescription: result.ai_description,
-          foodName: result.name,
-          calories: String(result.calories),
-          protein: String(result.protein),
-          carbs: String(result.carbs),
-          fat: String(result.fat),
-          fiber: String(result.fiber),
-          serving: result.serving,
-          servingGrams: String(result.servingGrams || ''),
+          items: JSON.stringify(result.items),
           inputType: 'camera',
         },
       });

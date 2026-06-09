@@ -38,18 +38,18 @@ export interface UnitMeta {
 export const UNIT_META: Record<ServingUnit, UnitMeta> = {
   g: { label: 'gram', plural: 'grams', category: 'weight' },
   ml: { label: 'ml', plural: 'ml', category: 'volume', gramsPerUnit: 1 },
-  serving: { label: 'serving', plural: 'servings', category: 'count' },
-  piece: { label: 'piece', plural: 'pieces', category: 'count' },
-  can: { label: 'can', plural: 'cans', category: 'count' },
-  bottle: { label: 'bottle', plural: 'bottles', category: 'count' },
-  scoop: { label: 'scoop', plural: 'scoops', category: 'count' },
+  serving: { label: 'serving', plural: 'servings', category: 'count', gramsPerUnit: 100 },
+  piece: { label: 'piece', plural: 'pieces', category: 'count', gramsPerUnit: 100 },
+  can: { label: 'can', plural: 'cans', category: 'count', gramsPerUnit: 330 },
+  bottle: { label: 'bottle', plural: 'bottles', category: 'count', gramsPerUnit: 500 },
+  scoop: { label: 'scoop', plural: 'scoops', category: 'count', gramsPerUnit: 30 },
   cup: { label: 'cup', plural: 'cups', category: 'volume', gramsPerUnit: 240 },
   bowl: { label: 'bowl', plural: 'bowls', category: 'volume', gramsPerUnit: 300 },
   oz: { label: 'oz', plural: 'oz', category: 'weight', gramsPerUnit: 28.35 },
   floz: { label: 'fl oz', plural: 'fl oz', category: 'volume', gramsPerUnit: 29.57 },
   tbsp: { label: 'tbsp', plural: 'tbsp', category: 'volume', gramsPerUnit: 15 },
   tsp: { label: 'tsp', plural: 'tsp', category: 'volume', gramsPerUnit: 5 },
-  plate: { label: 'plate', plural: 'plates', category: 'count' },
+  plate: { label: 'plate', plural: 'plates', category: 'count', gramsPerUnit: 300 },
 };
 
 // ── Scaled nutrition result ──
@@ -146,11 +146,14 @@ export function getAvailableUnits(
   baseUnit: ServingUnit,
   isPackaged: boolean,
 ): ServingUnit[] {
-  if (isPackaged) {
-    return ['ml', 'g', 'serving', 'can', 'bottle', 'piece', 'scoop'];
+  const units: ServingUnit[] = isPackaged
+    ? ['ml', 'g', 'serving', 'can', 'bottle', 'piece', 'scoop']
+    : ['g', 'cup', 'bowl', 'piece', 'serving'];
+  // Always include the base unit so user can switch back to it
+  if (baseUnit && !units.includes(baseUnit)) {
+    units.unshift(baseUnit);
   }
-  // AI-detected / whole foods
-  return ['g', 'cup', 'bowl', 'piece', 'serving'];
+  return units;
 }
 
 /**
@@ -193,16 +196,20 @@ export function estimateBaseNutrition(
 function detectServingUnit(desc: string): ServingUnit | null {
   if (!desc) return null;
   const lower = desc.toLowerCase().trim();
-  if (/(\d+\.?\d*)\s*ml/i.test(lower)) return 'ml';
-  if (/(\d+\.?\d*)\s*g\b/i.test(lower)) return 'g';
-  if (/(\d+\.?\d*)\s*oz/i.test(lower)) return 'oz';
-  if (/(\d+\.?\d*)\s*fl\s*oz/i.test(lower)) return 'floz';
+  // Check explicit container words FIRST (before bare ml/g numbers)
   if (/\bpiece\b|\bpieces\b/i.test(lower)) return 'piece';
   if (/\bcan\b|\bcans\b/i.test(lower)) return 'can';
   if (/\bbottle\b|\bbottles\b/i.test(lower)) return 'bottle';
   if (/\bcap\b/i.test(lower)) return 'scoop';
-  if (/\bcup\b/i.test(lower)) return 'cup';
+  if (/\bcup\b/i.test(lower) && !/(\d+\.?\d*)\s*g\b/i.test(lower)) return 'cup';
   if (/\bbowl\b/i.test(lower)) return 'bowl';
+  if (/\bplate\b|\bplates\b/i.test(lower)) return 'plate';
+  if (/\bserving\b|\bservings\b/i.test(lower)) return 'serving';
+  // Then check numeric patterns
+  if (/(\d+\.?\d*)\s*ml/i.test(lower)) return 'ml';
+  if (/(\d+\.?\d*)\s*g\b/i.test(lower)) return 'g';
+  if (/(\d+\.?\d*)\s*oz/i.test(lower)) return 'oz';
+  if (/(\d+\.?\d*)\s*fl\s*oz/i.test(lower)) return 'floz';
   return null;
 }
 
@@ -279,8 +286,11 @@ export interface ScaleInput {
 /**
  * Scale nutrition values from base to the requested serving.
  *
- * If the new unit matches the base unit, simple ratio is used.
- * If different (e.g. base in g, requested in cups), converts via grams.
+ * Rules:
+ *   - Same unit → simple ratio (quantity / baseServingValue)
+ *   - Target is count-based → 1 count = 1 base serving → ratio = quantity
+ *   - Base is count-based → convert both to grams via gramsPerUnit
+ *   - Both weight/volume → convert both to grams
  */
 export function scaleNutrition(input: ScaleInput): ScaledNutrition {
   const { base, quantity, unit } = input;
@@ -294,44 +304,43 @@ export function scaleNutrition(input: ScaleInput): ScaledNutrition {
     };
   }
 
-  // Convert everything to grams for cross-unit scaling
-  const baseInGrams = toGrams(base.baseServingValue, base.baseServingUnit);
-  const requestedInGrams = toGrams(quantity, unit);
+  const baseMeta = UNIT_META[base.baseServingUnit];
+  const targetMeta = UNIT_META[unit];
+  const baseCat = baseMeta?.category || 'count';
+  const targetCat = targetMeta?.category || 'count';
 
-  if (baseInGrams <= 0 || !isFinite(baseInGrams)) {
-    // Fallback: treat as direct ratio if conversion not possible
-    const ratio = quantity / base.baseServingValue;
-    return buildScaled(base, ratio, quantity, unit);
+  let ratio: number;
+
+  if (base.baseServingUnit === unit) {
+    ratio = quantity / base.baseServingValue;
+  } else if (targetCat === 'count') {
+    ratio = quantity;
+  } else if (baseCat === 'count') {
+    const baseG = toGrams(base.baseServingValue, base.baseServingUnit);
+    const targetG = toGrams(quantity, unit);
+    ratio = baseG > 0 && targetG > 0 ? targetG / baseG : quantity;
+  } else {
+    const baseG = toGrams(base.baseServingValue, base.baseServingUnit);
+    const targetG = toGrams(quantity, unit);
+    ratio = baseG > 0 && targetG > 0 ? targetG / baseG : quantity / base.baseServingValue;
   }
 
-  const ratio = requestedInGrams / baseInGrams;
+  console.log(
+    `[nutritionScale] ${base.baseServingValue}${base.baseServingUnit} → ${quantity}${unit} | ` +
+    `ratio=${ratio.toFixed(4)} cal=${Math.round(base.calories * ratio)}`
+  );
+
   return buildScaled(base, ratio, quantity, unit);
 }
 
 function toGrams(value: number, unit: ServingUnit): number {
   const meta = UNIT_META[unit];
-  if (!meta) return value;
-
+  if (meta?.gramsPerUnit) return value * meta.gramsPerUnit;
   switch (unit) {
-    case 'g':
-      return value;
-    case 'ml':
-      return value; // 1ml ≈ 1g for water-density foods
-    case 'oz':
-      return value * 28.35;
-    case 'cup':
-      return value * 240;
-    case 'bowl':
-      return value * 300;
-    case 'floz':
-      return value * 29.57;
-    case 'tbsp':
-      return value * 15;
-    case 'tsp':
-      return value * 5;
-    // Count-based units — use gramsPerUnit estimate or fallback to ratio
-    default:
-      return meta.gramsPerUnit ? value * meta.gramsPerUnit : -1;
+    case 'g': return value;
+    case 'ml': return value;
+    case 'oz': return value * 28.35;
+    default: return value;
   }
 }
 

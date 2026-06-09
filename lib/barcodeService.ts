@@ -235,9 +235,9 @@ async function tryOpenFoodFacts(barcode: string): Promise<FoodProduct | null> {
     const p = data.product;
     const n = p.nutriments || {};
 
-    let calories = Number(n['energy-kcal_100g'] || n['energy-kcal'] || 0);
+    let calories = Number(n['energy-kcal_100g'] || n['energy_100g'] / 4.184 || 0);
     if (!calories) {
-      const kj = Number(n['energy-kj_100g'] || n['energy-kj'] || 0);
+      const kj = Number(n['energy-kj_100g'] || 0);
       if (kj > 0) calories = Math.round(kj / 4.184);
     }
 

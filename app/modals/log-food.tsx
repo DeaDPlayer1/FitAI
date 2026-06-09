@@ -15,7 +15,21 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/constants/theme';
 import { useUserStore } from '@/store/userStore';
-import { analyzeFood, analyzeImageWithAI, MealLog } from '@/lib/nutritionAI';
+import { analyzeFood, analyzeImageWithAI, type MealLog, type FoodItem as OldFoodItem, type FoodAnalysisItem } from '@/lib/nutritionAI';
+
+function oldToAnalysis(old: OldFoodItem): FoodAnalysisItem {
+  const grams = parseInt(old.quantity) || 100;
+  const r = 100 / grams;
+  return {
+    name: old.name,
+    grams,
+    calories_per_100g: Math.round(old.calories * r),
+    protein_per_100g: Math.round(old.protein * r * 10) / 10,
+    carbs_per_100g: Math.round(old.carbs * r * 10) / 10,
+    fat_per_100g: Math.round(old.fat * r * 10) / 10,
+    fiber_per_100g: Math.round(old.fiber * r * 10) / 10,
+  };
+}
 
 import { supabase } from '@/lib/supabase';
 import { syncUserData } from '@/lib/sync';
@@ -50,6 +64,7 @@ export default function LogFoodModal() {
   const savingRef = useRef(false);
   const [isVisionAnalysis, setIsVisionAnalysis] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [progressText, setProgressText] = useState('');
 
   const { showToast } = useToast();
 
@@ -86,13 +101,7 @@ export default function LogFoodModal() {
         params: {
           imageUri: uri,
           aiDescription: analysisResult.ai_description,
-          foodName: analysisResult.name,
-          calories: String(analysisResult.calories),
-          protein: String(analysisResult.protein),
-          carbs: String(analysisResult.carbs),
-          fat: String(analysisResult.fat),
-          fiber: String(analysisResult.fiber),
-          serving: analysisResult.serving,
+          items: JSON.stringify(analysisResult.items),
           inputType: 'gallery',
         },
       });
@@ -105,10 +114,20 @@ export default function LogFoodModal() {
   const handleParse = async () => {
     if (!foodText.trim()) return;
     setStep('parsing');
+    setProgressText('Identifying food items...');
     try {
+      setProgressText('Looking up nutrition data...');
       const result = await analyzeFood({ text: foodText.trim(), userId: user?.id || '' });
-      setParsedMeal(result);
-      setStep('review');
+      if (!result.items || result.items.length === 0) throw new Error('No food found');
+      const analysisItems: FoodAnalysisItem[] = result.items.map(oldToAnalysis);
+      (router as any).replace({
+        pathname: '/modals/confirm-food',
+        params: {
+          voiceTranscript: foodText,
+          items: JSON.stringify(analysisItems),
+          inputType: 'text',
+        },
+      });
     } catch (e: any) {
       Alert.alert('AI Error', e.message || 'Could not parse food. Try again.');
       setStep('input');
@@ -166,7 +185,7 @@ export default function LogFoodModal() {
               <Text style={styles.inputLabel}>What did you eat?</Text>
               <TextInput
                 style={styles.textArea}
-                placeholder="e.g. 2 eggs, avocado toast and black coffee..."
+                placeholder="e.g. 2 eggs, 200g cooked rice, 100g chicken, 1 banana..."
                 placeholderTextColor={theme.colors.textMuted}
                 value={foodText}
                 onChangeText={setFoodText}
@@ -179,18 +198,21 @@ export default function LogFoodModal() {
                   style={styles.toolBtn}
                 >
                   <Feather name="camera" size={20} color={theme.colors.primaryDeep} />
+                  <Text style={styles.toolLabel}>Camera</Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
                   onPress={pickFromGallery}
                   style={styles.toolBtn}
                 >
                   <Feather name="image" size={20} color={theme.colors.primaryDeep} />
+                  <Text style={styles.toolLabel}>Gallery</Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
                   onPress={() => router.push('/modals/barcode-scanner')}
                   style={styles.toolBtn}
                 >
                   <Text style={{ fontSize: 20, lineHeight: 22 }}>📦</Text>
+                  <Text style={styles.toolLabel}>Barcode</Text>
                 </TouchableOpacity>
               </View>
 
@@ -215,8 +237,8 @@ export default function LogFoodModal() {
             <ActivityIndicator size="large" color={theme.colors.primary} />
             <Text style={styles.loadingText}>
               {isVisionAnalysis
-                ? 'AI is analyzing the image...'
-                : 'AI is calculating nutrients...'}
+                ? 'Analyzing image...'
+                : progressText || 'Analyzing...'}
             </Text>
           </View>
         )}
@@ -272,6 +294,31 @@ export default function LogFoodModal() {
                 </View>
               </View>
             </LinearGradient>
+
+            {/* ── Per-Item Breakdown ── */}
+            {parsedMeal.items.length > 1 && (
+              <Animated.View entering={FadeInDown.delay(150)} style={styles.itemsSection}>
+                <Text style={styles.itemsSectionTitle}>Food Items</Text>
+                {parsedMeal.items.map((item, idx) => (
+                  <Animated.View
+                    key={item.name + idx}
+                    entering={FadeInDown.delay(200 + idx * 50)}
+                    style={styles.itemCard}
+                  >
+                    <View style={styles.itemCardMain}>
+                      <Text style={styles.itemName}>{item.name}</Text>
+                      <Text style={styles.itemQty}>{item.quantity}</Text>
+                    </View>
+                    <View style={styles.itemMacros}>
+                      <Text style={styles.itemCal}>{item.calories} kcal</Text>
+                      <Text style={styles.itemMacroSub}>
+                        P {item.protein}g · C {item.carbs}g · F {item.fat}g
+                      </Text>
+                    </View>
+                  </Animated.View>
+                ))}
+              </Animated.View>
+            )}
 
             {/* ── Macro Breakdown ── */}
             <View style={styles.macroSection}>
@@ -386,12 +433,16 @@ const styles = StyleSheet.create({
   },
   toolRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
   toolBtn: {
-    width: 52,
-    height: 52,
+    width: 64,
+    height: 64,
     borderRadius: 16,
     backgroundColor: theme.colors.background,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
+  },
+  toolLabel: {
+    fontSize: 9, fontWeight: '600', color: theme.colors.text.muted,
   },
   toolBtnActive: { backgroundColor: theme.colors.danger },
   thumbnailRow: {
@@ -471,6 +522,47 @@ const styles = StyleSheet.create({
   goalProgressFill: { height: '100%', backgroundColor: '#FFFFFF', borderRadius: 2 },
   goalProgressText: {
     fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.6)', minWidth: 110,
+  },
+
+  itemsSection: {
+    gap: 8,
+  },
+  itemsSectionTitle: {
+    fontSize: 14, fontWeight: '700', color: theme.colors.text.primary,
+    marginBottom: 4,
+  },
+  itemCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.border.soft,
+  },
+  itemCardMain: {
+    flex: 1,
+    marginRight: 12,
+  },
+  itemName: {
+    fontSize: 15, fontWeight: '700', color: theme.colors.text.primary,
+    textTransform: 'capitalize',
+  },
+  itemQty: {
+    fontSize: 12, fontWeight: '500', color: theme.colors.text.muted,
+    marginTop: 2,
+  },
+  itemMacros: {
+    alignItems: 'flex-end',
+  },
+  itemCal: {
+    fontSize: 16, fontWeight: '800', color: theme.colors.primary,
+    fontVariant: ['tabular-nums'],
+  },
+  itemMacroSub: {
+    fontSize: 11, fontWeight: '500', color: theme.colors.text.muted,
+    marginTop: 1,
   },
 
   macroSection: {
