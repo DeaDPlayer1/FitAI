@@ -88,7 +88,13 @@ export default function FoodDetailModal() {
     if (isQuickAdd || isSavedMeal) return null;
     if (!food) return null;
     const g = unit === 'serving' ? quantity * (food.serving_grams || 100) : quantity;
-    return calculateMacros(food, g);
+    return calculateMacros({
+      calories: food.calories_per_100g,
+      protein: food.protein_per_100g,
+      carbs: food.carbs_per_100g,
+      fat: food.fat_per_100g,
+      fiber: food.fiber_per_100g || 0,
+    }, g);
   }, [food, quantity, unit, isQuickAdd, isSavedMeal]);
 
   const handleLog = useCallback(async () => {

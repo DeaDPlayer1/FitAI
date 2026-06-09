@@ -48,7 +48,7 @@ export default function FoodSearchModal() {
   const [section, setSection] = useState<Section>('initial');
 
   const inputRef = useRef<TextInput>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const mealType = params.mealType || getMealTypeByTime();
 
