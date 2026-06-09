@@ -85,7 +85,6 @@
           "backgroundColor": "#8B5CF6"
         }
       ],
-      "expo-dev-client",
       "expo-audio",
       "expo-asset",
       "expo-sqlite",
