@@ -46,6 +46,7 @@ import AIResponseCard from '@/components/ui/AIResponseCard';
 import InsightCardUI from '@/components/ui/InsightCard';
 import PulseDot from '@/components/ui/PulseDot';
 import AvatarCircle from '@/components/ui/AvatarCircle';
+import { withErrorBoundary } from '@/utils/withErrorBoundary';
 
 type Message = { id: string; role: 'ai' | 'user'; content: string; stages?: ThinkingStage[] };
 type QuickAction = { id: string; icon: React.ComponentProps<typeof Feather>['name']; label: string; prompt: string };
@@ -58,7 +59,7 @@ const AI_STATES = [
   { label: 'Processing...', icon: 'loader', color: '#EC4899' },
 ];
 
-function CoachBubble({ message }: { message: Message }) {
+const CoachBubble = React.memo(function CoachBubble({ message }: { message: Message }) {
   const [done, setDone] = useState(false);
   return (
     <Animated.View entering={FadeInDown.duration(300).springify()} style={styles.coachBubbleWrap}>
@@ -83,9 +84,9 @@ function CoachBubble({ message }: { message: Message }) {
       </View>
     </Animated.View>
   );
-}
+});
 
-function UserBubble({ message }: { message: Message }) {
+const UserBubble = React.memo(function UserBubble({ message }: { message: Message }) {
   return (
     <Animated.View entering={FadeInDown.duration(250).springify()} style={styles.userBubbleWrap}>
       <LinearGradient
@@ -98,9 +99,9 @@ function UserBubble({ message }: { message: Message }) {
       </LinearGradient>
     </Animated.View>
   );
-}
+});
 
-function QuickActionPill({ action, handleSend }: { action: { id: string; icon: string; label: string; prompt: string }; handleSend: (text: string) => void }) {
+const QuickActionPill = React.memo(function QuickActionPill({ action, handleSend }: { action: { id: string; icon: string; label: string; prompt: string }; handleSend: (text: string) => void }) {
   return (
     <TouchableOpacity
       style={styles.quickAction}
@@ -114,7 +115,7 @@ function QuickActionPill({ action, handleSend }: { action: { id: string; icon: s
       <Text style={styles.quickActionText}>{action.label}</Text>
     </TouchableOpacity>
   );
-}
+});
 
 function TypingDots() {
   return (
@@ -131,7 +132,7 @@ function TypingDots() {
   );
 }
 
-export default function AiCoach() {
+function AiCoach() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -616,6 +617,8 @@ ${(ctx.memory as any)?.contextHistory || ''}` : '';
     </View>
   );
 }
+
+export default withErrorBoundary(AiCoach, 'Could not load AI coach');
 
 const styles = StyleSheet.create({
   headerHero: {

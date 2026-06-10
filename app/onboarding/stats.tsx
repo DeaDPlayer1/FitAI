@@ -29,7 +29,7 @@ export default function StatsScreen() {
     setWeight(weight);
     setWeightUnit(weightUnit);
     setAge(age);
-    router.push('/onboarding/create-account');
+    router.push('/onboarding/activity');
   };
 
   return (
@@ -44,7 +44,7 @@ export default function StatsScreen() {
           </TouchableOpacity>
           <View style={styles.dotsRow}>
             {Array.from({ length: 8 }).map((_, i) => (
-              <View key={i} style={[styles.dot, i <= 5 && styles.dotActive]} />
+              <View key={i} style={[styles.dot, i <= 2 && styles.dotActive]} />
             ))}
           </View>
           <View style={styles.backBtn} />

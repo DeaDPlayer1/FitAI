@@ -5,8 +5,17 @@ import type { ValidationInput } from './safetyEngine';
 import { getDb } from './db';
 import Fuse from 'fuse.js';
 import foodDatabaseJson from '@/assets/food_database.json';
+import { canonicalizeRestaurantFood, detectBrand } from './restaurantCanonicalizer';
+import { canonicalizeFoodName } from './foodCanonicalMap';
+import { findCategoryAverage } from './foodCategoryAverages';
 
 const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
+
+/** USDA key: set EXPO_PUBLIC_USDA_API_KEY in .env (Expo embeds EXPO_PUBLIC_* at build time). */
+function getUsdaApiKey(): string | null {
+  const key = process.env.EXPO_PUBLIC_USDA_API_KEY || process.env.USDA_API_KEY;
+  return key?.trim() || null;
+}
 
 export type FoodDataSource = 'bundled' | 'open_food_facts' | 'usda' | 'cache' | 'ai_vision' | 'user';
 
@@ -20,6 +29,14 @@ export interface FoodAnalysisItem {
   fiber_per_100g: number;
   source?: FoodDataSource;
   confidence?: number;
+  chain?: string;
+  servingLabel?: string;
+  isRestaurant?: boolean;
+  totalCalories?: number;
+  totalProtein?: number;
+  totalCarbs?: number;
+  totalFat?: number;
+  totalFiber?: number;
 }
 
 export interface AnalysisResult {
@@ -64,6 +81,14 @@ export interface FoodItem {
   carbs: number;
   fat: number;
   fiber: number;
+  chain?: string;
+  servingLabel?: string;
+  isRestaurant?: boolean;
+  totalCalories?: number;
+  totalProtein?: number;
+  totalCarbs?: number;
+  totalFat?: number;
+  totalFiber?: number;
 }
 
 export interface MealLog {
@@ -140,7 +165,8 @@ export async function analyzeImageQuality(base64: string): Promise<ImageQualityR
       qualityWarnings: warnings,
       qualityScore: json.quality_score ?? 50,
     };
-  } catch {
+  } catch (e) {
+    console.warn('[nutritionAI] analyzeImageQuality failed:', e);
     return { valid: true, qualityWarnings: [], qualityScore: 50 };
   }
 }
@@ -149,279 +175,13 @@ export async function validateFoodImage(base64: string): Promise<boolean> {
   try {
     const quality = await analyzeImageQuality(base64);
     return quality.valid;
-  } catch {
+  } catch (e) {
+    console.warn('[nutritionAI] validateFoodImage failed:', e);
     return true;
   }
 }
 
-// ══════════════════════════════════════════════════════════
-//  PHASE 3: FOOD CANONICALIZATION MAP
-// ══════════════════════════════════════════════════════════
-
-const NAME_CANONICAL_MAP: Record<string, string> = {
-  // Indian dish names
-  'paneer': 'Paneer',
-  'daal': 'Dal',
-  'dal': 'Dal',
-  'roti': 'Chapati',
-  'phulka': 'Chapati',
-  'chawal': 'Cooked Rice',
-  'bhaat': 'Cooked Rice',
-  'dahi': 'Curd',
-  'ghee': 'Ghee',
-  'aloo': 'Potato',
-  'bhindi': 'Okra',
-  'baingan': 'Eggplant',
-  'bharta': 'Baingan Bharta',
-  'biryani': 'Chicken Biryani',
-  'pulao': 'Vegetable Pulao',
-  'pulav': 'Vegetable Pulao',
-  'kheer': 'Rice Pudding',
-  'raita': 'Raita',
-  'chai': 'Tea',
-  'masala chai': 'Tea',
-  'lassi': 'Lassi',
-  'makhani': 'Butter Chicken',
-  'korma': 'Chicken Korma',
-  'tandoori': 'Chicken Tandoori',
-  'seekh': 'Seekh Kebab',
-  'kofta': 'Malai Kofta',
-  'palak': 'Palak Paneer',
-  'saag': 'Palak Paneer',
-  'idli': 'Idli',
-  'dosa': 'Dosa',
-  'vada': 'Vada',
-  'uttapam': 'Uttapam',
-  'sambar': 'Sambar',
-  'rasam': 'Rasam',
-  'chutney': 'Coconut Chutney',
-  'puri': 'Puri',
-  'bhaji': 'Pav Bhaji',
-  'bhel': 'Bhel Puri',
-  'sev': 'Sev Puri',
-  'dabeli': 'Dabeli',
-  'vada pav': 'Vada Pav',
-  'samosa': 'Samosa',
-  'pakora': 'Pakora',
-  'pakode': 'Pakora',
-  'kachori': 'Kachori',
-  'dhokla': 'Dhokla',
-  'thepla': 'Thepla',
-  'paratha': 'Paratha',
-  'naan': 'Naan',
-  'kulcha': 'Naan',
-  'poori': 'Puri',
-  'upma': 'Upma',
-  'poha': 'Poha',
-  'sheera': 'Sheera',
-  'halwa': 'Halwa',
-  'gulab': 'Gulab Jamun',
-  'rasgulla': 'Rasgulla',
-  'jalebi': 'Jalebi',
-  'barfi': 'Barfi',
-  'ladoo': 'Ladoo',
-  'kesari': 'Kesari Bath',
-
-  // Common typos / misspellings
-  'wheate flour': 'Wheat Flour',
-  'wheate': 'Wheat',
-  'chiken': 'Chicken Breast',
-  'chiken breast': 'Chicken Breast',
-  'chicken breast': 'Chicken Breast',
-  'chkn': 'Chicken Breast',
-  'veggies': 'Mixed Vegetables',
-  'veg': 'Mixed Vegetables',
-  'vege': 'Mixed Vegetables',
-  'curd': 'Curd',
-  'yogurt': 'Curd',
-  'yoghurt': 'Curd',
-  'briyani': 'Chicken Biryani',
-  'biriyani': 'Chicken Biryani',
-  'nan': 'Naan',
-  'roti canai': 'Chapati',
-
-  // Western food common names
-  'coke': 'Coca-Cola',
-  'coca cola': 'Coca-Cola',
-  'pepsi': 'Pepsi',
-  'sprite': 'Sprite',
-  'fanta': 'Fanta',
-  'oreo': 'Oreo Cookies',
-  'oreos': 'Oreo Cookies',
-  'maggie': 'Maggi Noodles',
-  'maggi': 'Maggi Noodles',
-  'noodle': 'Instant Noodles',
-  'noodles': 'Instant Noodles',
-  'ramen': 'Instant Noodles',
-  'oat': 'Oats',
-  'oats': 'Oats',
-  'avo': 'Avocado',
-  'avacado': 'Avocado',
-  'adacado': 'Avocado',
-  'broccli': 'Broccoli',
-  'brocolli': 'Broccoli',
-  'cauli': 'Cauliflower',
-  'cauliflwr': 'Cauliflower',
-  'capsicum': 'Bell Pepper',
-  'bell pepper': 'Bell Pepper',
-  'sweet potato': 'Sweet Potato',
-  'sweet potatoe': 'Sweet Potato',
-  'zuchini': 'Zucchini',
-  'zucchini': 'Zucchini',
-  'courgette': 'Zucchini',
-  'aubergine': 'Eggplant',
-  'egg plant': 'Eggplant',
-  'brinjal': 'Eggplant',
-  'mushroom': 'Mushrooms',
-  'mushrom': 'Mushrooms',
-  'tomato': 'Tomato',
-  'tomatos': 'Tomatoes',
-  'potato': 'Potato',
-  'potatos': 'Potatoes',
-  'french fry': 'French Fries',
-  'french fries': 'French Fries',
-  'fries': 'French Fries',
-  'chips': 'French Fries',
-  'burger': 'Hamburger',
-  'ham burger': 'Hamburger',
-  'cheeseburger': 'Cheeseburger',
-  'pizza': 'Pizza',
-  'pasta': 'Pasta',
-  'spagetti': 'Spaghetti',
-  'spaghetti': 'Spaghetti',
-  'mac n cheese': 'Mac and Cheese',
-  'mac and cheese': 'Mac and Cheese',
-  'sandwhich': 'Sandwich',
-  'sandwich': 'Sandwich',
-  'toast': 'Toast',
-  'omlette': 'Omelette',
-  'omlet': 'Omelette',
-  'scrambled': 'Scrambled Eggs',
-  'fried egg': 'Fried Egg',
-  'boiled egg': 'Boiled Egg',
-  'egg': 'Egg',
-  'eggs': 'Eggs',
-  'whey': 'Whey Protein',
-  'whey protein': 'Whey Protein',
-  'protein shake': 'Whey Protein',
-  'protein powder': 'Whey Protein',
-  'smoothie': 'Fruit Smoothie',
-  'salmon': 'Salmon',
-  'tuna': 'Tuna',
-  'sardine': 'Sardines',
-  'mackarel': 'Mackerel',
-  'prawn': 'Prawns',
-  'shrimp': 'Prawns',
-  'fish': 'Fish Fillet',
-  'steak': 'Beef Steak',
-  'beef': 'Beef',
-  'chicken': 'Chicken',
-  'pork': 'Pork',
-  'mutton': 'Mutton',
-  'lamb': 'Lamb',
-  'bacon': 'Bacon',
-  'sausage': 'Sausage',
-  'ham': 'Ham',
-  'salami': 'Salami',
-  'butter': 'Butter',
-  'cheese': 'Cheese',
-  'mayo': 'Mayonnaise',
-  'mayonnaise': 'Mayonnaise',
-  'ketchup': 'Ketchup',
-  'mustard': 'Mustard',
-  'bbq sauce': 'BBQ Sauce',
-  'hot sauce': 'Hot Sauce',
-  'soy sauce': 'Soy Sauce',
-  'vinegar': 'Vinegar',
-  'olive oil': 'Olive Oil',
-  'coconut oil': 'Coconut Oil',
-  'vege oil': 'Vegetable Oil',
-  'vegetable oil': 'Vegetable Oil',
-  'canola oil': 'Canola Oil',
-  'sunflower oil': 'Sunflower Oil',
-  'honey': 'Honey',
-  'maple syrup': 'Maple Syrup',
-  'sugar': 'White Sugar',
-  'brown sugar': 'Brown Sugar',
-  'salt': 'Salt',
-  'pepper': 'Black Pepper',
-  'black pepper': 'Black Pepper',
-
-  // Fruits
-  'apple': 'Apple',
-  'orange': 'Orange',
-  'banana': 'Banana',
-  'bananna': 'Banana',
-  'mango': 'Mango',
-  'grapes': 'Grapes',
-  'strawberry': 'Strawberries',
-  'strawberries': 'Strawberries',
-  'blueberry': 'Blueberries',
-  'blueberries': 'Blueberries',
-  'raspberry': 'Raspberries',
-  'watermelon': 'Watermelon',
-  'muskmelon': 'Muskmelon',
-  'pineapple': 'Pineapple',
-  'papaya': 'Papaya',
-  'pomegranate': 'Pomegranate',
-  'guava': 'Guava',
-  'kiwi': 'Kiwi',
-  'lemon': 'Lemon',
-  'lime': 'Lime',
-  'coconut': 'Coconut',
-  'dates': 'Dates',
-  'fig': 'Figs',
-  'prunes': 'Prunes',
-  'raisins': 'Raisins',
-  'almond': 'Almonds',
-  'almonds': 'Almonds',
-  'badam': 'Almonds',
-  'walnut': 'Walnuts',
-  'walnuts': 'Walnuts',
-  'cashew': 'Cashews',
-  'cashews': 'Cashews',
-  'kaju': 'Cashews',
-  'pista': 'Pistachios',
-  'pistachio': 'Pistachios',
-  'peanut': 'Peanuts',
-  'peanuts': 'Peanuts',
-  'mungfali': 'Peanuts',
-  'raisins': 'Raisins',
-  'kishmish': 'Raisins',
-
-  // Grains
-  'rice': 'Cooked Rice',
-  'white rice': 'Cooked Rice',
-  'basmati rice': 'Cooked Rice',
-  'brown rice': 'Brown Rice',
-  'quinoa': 'Quinoa',
-  'wheat': 'Wheat',
-  'whole wheat': 'Whole Wheat',
-  'flour': 'Wheat Flour',
-  'maida': 'White Flour',
-  'atta': 'Whole Wheat Flour',
-  'sooji': 'Semolina',
-  'rava': 'Semolina',
-  'semolina': 'Semolina',
-  'corn': 'Corn',
-  'maize': 'Corn',
-  'makki': 'Corn',
-  'popcorn': 'Popcorn',
-  'bajra': 'Bajra',
-  'jowar': 'Jowar',
-  'ragi': 'Ragi',
-  'nachni': 'Ragi',
-};
-
-export function canonicalizeFoodName(rawName: string): string {
-  const lower = rawName.toLowerCase().trim();
-  for (const [misspelling, canonical] of Object.entries(NAME_CANONICAL_MAP)) {
-    if (lower === misspelling || lower.includes(misspelling + ' ') || lower.startsWith(misspelling + ' ')) {
-      return canonical;
-    }
-  }
-  return rawName.replace(/\b\w/g, c => c.toUpperCase());
-}
+// canonicalizeFoodName imported from ./foodCanonicalMap
 
 export function cleanAIDescription(text: string): string {
   return text
@@ -458,7 +218,9 @@ export async function verifyAndCrossCheck(item: FoodAnalysisItem): Promise<FoodA
         confidence: 0.95,
       };
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[nutritionAI] verifyAndCrossCheck (outer) failed:', e);
+  }
   return { ...item, confidence: (item.confidence ?? 0.5) };
 }
 
@@ -467,120 +229,7 @@ export async function verifyAndCrossCheck(item: FoodAnalysisItem): Promise<FoodA
 //  (NO AI MACRO CALCULATION)
 // ══════════════════════════════════════════════════════════
 
-const FOOD_CATEGORY_AVERAGES: Record<string, Per100g> = {
-  // Grains & Cereals
-  'rice': { cal: 130, prot: 2.7, carb: 28, fat: 0.3, fbr: 0.4 },
-  'wheat': { cal: 340, prot: 13, carb: 72, fat: 2.5, fbr: 12 },
-  'oats': { cal: 389, prot: 17, carb: 66, fat: 6.9, fbr: 10.6 },
-  'bread': { cal: 265, prot: 9, carb: 49, fat: 3.2, fbr: 2.7 },
-  'pasta': { cal: 131, prot: 5, carb: 25, fat: 1.1, fbr: 1.8 },
-
-  // Proteins
-  'chicken': { cal: 165, prot: 31, carb: 0, fat: 3.6, fbr: 0 },
-  'egg': { cal: 155, prot: 13, carb: 1.1, fat: 11, fbr: 0 },
-  'fish': { cal: 130, prot: 24, carb: 0, fat: 3, fbr: 0 },
-  'beef': { cal: 250, prot: 26, carb: 0, fat: 15, fbr: 0 },
-  'pork': { cal: 242, prot: 27, carb: 0, fat: 14, fbr: 0 },
-  'lamb': { cal: 258, prot: 25, carb: 0, fat: 16, fbr: 0 },
-  'paneer': { cal: 265, prot: 18, carb: 1.2, fat: 21, fbr: 0 },
-  'tofu': { cal: 76, prot: 8, carb: 1.9, fat: 4.8, fbr: 0.3 },
-  'lentil': { cal: 116, prot: 9, carb: 20, fat: 0.4, fbr: 8 },
-  'dal': { cal: 116, prot: 9, carb: 20, fat: 0.4, fbr: 8 },
-  'beans': { cal: 132, prot: 8.7, carb: 24, fat: 0.5, fbr: 6.4 },
-
-  // Dairy
-  'milk': { cal: 66, prot: 3.3, carb: 5, fat: 3.5, fbr: 0 },
-  'curd': { cal: 61, prot: 3.5, carb: 4.7, fat: 3.3, fbr: 0 },
-  'yogurt': { cal: 61, prot: 3.5, carb: 4.7, fat: 3.3, fbr: 0 },
-  'cheese': { cal: 402, prot: 25, carb: 1.3, fat: 33, fbr: 0 },
-  'butter': { cal: 717, prot: 0.9, carb: 0, fat: 81, fbr: 0 },
-  'ghee': { cal: 900, prot: 0, carb: 0, fat: 100, fbr: 0 },
-
-  // Indian dishes
-  'chapati': { cal: 297, prot: 8, carb: 48, fat: 8, fbr: 4.5 },
-  'roti': { cal: 297, prot: 8, carb: 48, fat: 8, fbr: 4.5 },
-  'naan': { cal: 262, prot: 8, carb: 45, fat: 5.5, fbr: 2 },
-  'paratha': { cal: 310, prot: 7, carb: 42, fat: 12, fbr: 3 },
-  'idli': { cal: 58, prot: 2, carb: 12, fat: 0.1, fbr: 0.5 },
-  'dosa': { cal: 168, prot: 4, carb: 30, fat: 3.5, fbr: 1 },
-  'vada': { cal: 170, prot: 5, carb: 22, fat: 7, fbr: 1 },
-  'samosa': { cal: 260, prot: 5, carb: 31, fat: 13, fbr: 2 },
-  'pakora': { cal: 200, prot: 5, carb: 18, fat: 12, fbr: 1.5 },
-  'puri': { cal: 280, prot: 5, carb: 40, fat: 11, fbr: 1 },
-  'biryani': { cal: 180, prot: 10, carb: 22, fat: 6, fbr: 1 },
-  'pulao': { cal: 160, prot: 4, carb: 28, fat: 4, fbr: 1 },
-  'korma': { cal: 200, prot: 15, carb: 8, fat: 12, fbr: 1 },
-  'tandoori': { cal: 190, prot: 25, carb: 3, fat: 8, fbr: 0.5 },
-  'keema': { cal: 220, prot: 18, carb: 6, fat: 14, fbr: 0.5 },
-
-  // Vegetables
-  'potato': { cal: 77, prot: 2, carb: 17, fat: 0.1, fbr: 2.2 },
-  'tomato': { cal: 18, prot: 0.9, carb: 3.9, fat: 0.2, fbr: 1.2 },
-  'onion': { cal: 40, prot: 1.1, carb: 9.3, fat: 0.1, fbr: 1.7 },
-  'carrot': { cal: 41, prot: 0.9, carb: 10, fat: 0.2, fbr: 2.8 },
-  'broccoli': { cal: 34, prot: 2.8, carb: 7, fat: 0.4, fbr: 2.6 },
-  'cauliflower': { cal: 25, prot: 1.9, carb: 5, fat: 0.3, fbr: 2 },
-  'spinach': { cal: 23, prot: 2.9, carb: 3.6, fat: 0.4, fbr: 2.2 },
-  'okra': { cal: 33, prot: 2, carb: 7, fat: 0.2, fbr: 3.2 },
-  'eggplant': { cal: 25, prot: 1, carb: 6, fat: 0.2, fbr: 3 },
-  'cabbage': { cal: 25, prot: 1.3, carb: 6, fat: 0.1, fbr: 2.5 },
-  'peas': { cal: 81, prot: 5.4, carb: 14, fat: 0.4, fbr: 5.7 },
-  'corn': { cal: 96, prot: 3.4, carb: 21, fat: 1.5, fbr: 2.4 },
-  'mushroom': { cal: 22, prot: 3.1, carb: 3.3, fat: 0.3, fbr: 1 },
-
-  // Fruits
-  'banana': { cal: 89, prot: 1.1, carb: 23, fat: 0.3, fbr: 2.6 },
-  'apple': { cal: 52, prot: 0.3, carb: 14, fat: 0.2, fbr: 2.4 },
-  'orange': { cal: 47, prot: 0.9, carb: 12, fat: 0.1, fbr: 2.4 },
-  'mango': { cal: 60, prot: 0.8, carb: 15, fat: 0.4, fbr: 1.6 },
-  'grapes': { cal: 69, prot: 0.7, carb: 18, fat: 0.2, fbr: 0.9 },
-  'watermelon': { cal: 30, prot: 0.6, carb: 7.6, fat: 0.2, fbr: 0.4 },
-
-  // Beverages
-  'tea': { cal: 1, prot: 0, carb: 0, fat: 0, fbr: 0 },
-  'coffee': { cal: 2, prot: 0.3, carb: 0, fat: 0, fbr: 0 },
-  'juice': { cal: 45, prot: 0.5, carb: 11, fat: 0.1, fbr: 0.2 },
-  'soda': { cal: 41, prot: 0, carb: 10.6, fat: 0, fbr: 0 },
-  'beer': { cal: 43, prot: 0.5, carb: 3.6, fat: 0, fbr: 0 },
-  'wine': { cal: 83, prot: 0.1, carb: 2.6, fat: 0, fbr: 0 },
-
-  // Oils & Fats
-  'oil': { cal: 884, prot: 0, carb: 0, fat: 100, fbr: 0 },
-  'olive oil': { cal: 884, prot: 0, carb: 0, fat: 100, fbr: 0 },
-
-  // Nuts & Seeds
-  'almond': { cal: 579, prot: 21, carb: 22, fat: 50, fbr: 12.5 },
-  'walnut': { cal: 654, prot: 15, carb: 14, fat: 65, fbr: 6.7 },
-  'cashew': { cal: 553, prot: 18, carb: 30, fat: 44, fbr: 3.3 },
-  'peanut': { cal: 567, prot: 26, carb: 16, fat: 49, fbr: 8.5 },
-
-  // Generic fallbacks
-  'vegetable': { cal: 30, prot: 1.5, carb: 5, fat: 0.3, fbr: 2 },
-  'fruit': { cal: 55, prot: 0.5, carb: 13, fat: 0.2, fbr: 2 },
-  'meat': { cal: 200, prot: 25, carb: 0, fat: 10, fbr: 0 },
-  'seafood': { cal: 120, prot: 22, carb: 0.5, fat: 3, fbr: 0 },
-  'soup': { cal: 40, prot: 2, carb: 5, fat: 1.5, fbr: 0.5 },
-  'salad': { cal: 25, prot: 1.5, carb: 4, fat: 0.5, fbr: 1.5 },
-  'curry': { cal: 120, prot: 8, carb: 8, fat: 6, fbr: 2 },
-  'stir fry': { cal: 100, prot: 6, carb: 8, fat: 4, fbr: 2 },
-  'fried': { cal: 250, prot: 10, carb: 20, fat: 15, fbr: 1 },
-  'dessert': { cal: 300, prot: 4, carb: 45, fat: 12, fbr: 0.5 },
-  'snack': { cal: 200, prot: 5, carb: 25, fat: 9, fbr: 1 },
-  'sauce': { cal: 80, prot: 1, carb: 6, fat: 5, fbr: 0.5 },
-  'dip': { cal: 150, prot: 2, carb: 5, fat: 14, fbr: 0.5 },
-  'beverage': { cal: 35, prot: 0.5, carb: 8, fat: 0.1, fbr: 0 },
-  'grain': { cal: 200, prot: 6, carb: 40, fat: 1.5, fbr: 3 },
-  'legume': { cal: 120, prot: 8, carb: 20, fat: 0.5, fbr: 6 },
-  'dairy': { cal: 100, prot: 5, carb: 5, fat: 6, fbr: 0 },
-};
-
-function findCategoryAverage(foodName: string): Per100g | null {
-  const lower = foodName.toLowerCase();
-  for (const [category, avg] of Object.entries(FOOD_CATEGORY_AVERAGES)) {
-    if (lower.includes(category)) return avg;
-  }
-  return null;
-}
+// findCategoryAverage imported from ./foodCategoryAverages
 
 // ══════════════════════════════════════════════════════════
 //  IMAGE QUALITY SYSTEM PROMPT
@@ -628,6 +277,18 @@ const PIECE_WEIGHTS: Record<string, number> = {
   scoop: 30, scoops: 30,
   apple: 180, banana: 120, orange: 150, mango: 200,
   pizza: 250, 'pizza slice': 100,
+  burger: 210, burgers: 210, 'veggie burger': 210, 'chicken burger': 200,
+  whopper: 265, 'impossible whopper': 265,
+  wrap: 200, wraps: 200, burrito: 300, burritos: 300, taco: 150, tacos: 150,
+  'chicken wrap': 220, 'paneer wrap': 220,
+  sandwich: 200, sandwiches: 200, sub: 250, subs: 250, 'footlong sub': 350,
+  'chicken sandwich': 200, 'fish sandwich': 200,
+  'hot dog': 150, 'hot dogs': 150,
+  fries: 150, 'french fries': 150, 'medium fries': 150, 'large fries': 200,
+  'onion rings': 120, 'chicken nuggets': 100, 'chicken tenders': 120,
+  momo: 30, momos: 30, dumpling: 30, dumplings: 30,
+  'spring roll': 60, 'spring rolls': 60,
+  'samosa chaat': 200, 'pav bhaji': 250,
 };
 
 const UNIT_TO_GRAMS: Record<string, number> = {
@@ -688,25 +349,50 @@ Each object: {"food":"string","quantity":number,"unit":"string"}
 Valid units: g, ml, kg, cup, tbsp, tsp, piece, slice, bowl, glass, oz, lb, can, bottle
 Extract quantities exactly as written. If no quantity given, use 1.
 
+IMPORTANT: Recognize restaurant & fast food items by full names.
+"mcallo tikki" → food:"McAloo Tikki Burger"
+"zinger" → food:"Zinger Burger"
+"whopper" → food:"Whopper"
+"big mac" → food:"Big Mac"
+"oreo shake" → food:"Oreo Shake"
+"mcnuggets 6" → food:"Chicken McNuggets" quantity:6
+"subway club" → food:"Subway Club"
+"paneer tikka sub" → food:"Paneer Tikka Sub"
+"chicken biryani" → food:"Chicken Biryani"
+"cold coffee" → food:"Cold Coffee"
+"cutting chai" → food:"Cutting Chai"
+
 Examples:
 Input: "100g oats" → [{"food":"oats","quantity":100,"unit":"g"}]
 Input: "5 eggs and 100g rice" → [{"food":"eggs","quantity":5,"unit":"piece"},{"food":"rice","quantity":100,"unit":"g"}]
 Input: "2 slices bread with peanut butter" → [{"food":"bread","quantity":2,"unit":"slice"},{"food":"peanut butter","quantity":1,"unit":"tbsp"}]
-Input: "1 cup dal and 2 roti" → [{"food":"dal","quantity":1,"unit":"cup"},{"food":"roti","quantity":2,"unit":"piece"}]`;
+Input: "1 cup dal and 2 roti" → [{"food":"dal","quantity":1,"unit":"cup"},{"food":"roti","quantity":2,"unit":"piece"}]
+Input: "2 mcallo tikki" → [{"food":"McAloo Tikki Burger","quantity":2,"unit":"piece"}]
+Input: "1 zinger burger and fries" → [{"food":"Zinger Burger","quantity":1,"unit":"piece"},{"food":"French Fries","quantity":1,"unit":"medium"}]`;
 
-const IMAGE_ENTITY_EXTRACT_SYSTEM_PROMPT = `You identify every distinct food item in the image.
-CRITICAL: Do NOT calculate calories, protein, carbs, or any nutrition.
-For each item, estimate the food name and portion size in grams.
-Reply ONLY with a JSON array, no markdown, no other text:
-[{"food":"Cooked White Rice","grams":200},{"food":"Grilled Chicken Breast","grams":150}]
-Be specific about food type and cooking method.
-Estimate grams based on visual portion size using:
-- A standard dinner plate = 20-25cm diameter
-- A bowl of rice ≈ 200g
-- A chicken breast ≈ 150-200g
-- A can of Coca-Cola = 330ml = 330g
-- A slice of pizza = 100g
-- A glass of water = 200ml`;
+const IMAGE_ENTITY_EXTRACT_SYSTEM_PROMPT = `You are a professional food nutritionist with expert food photography analysis skills.
+Your task: identify every food item visible in this image with maximum precision.
+
+RULES:
+1. Only identify REAL PHYSICAL FOOD. If the image shows a screen, website, menu board, packaging without the actual food, or non-food items: respond ONLY with: NOT_FOOD
+2. For each food item you see, provide:
+   - Exact food name (be specific: 'Cooked Basmati Rice' not just 'rice')
+   - Cooking method if visible (grilled, fried, steamed, raw, baked)
+   - Estimated weight in grams using these references:
+     * Standard dinner plate ≈ 22cm diameter
+     * A mound of rice filling 1/3 of plate ≈ 150-200g
+     * Chicken breast (medium) ≈ 150g, large ≈ 200g
+     * 1 egg ≈ 50g whole, 45g without shell
+     * 1 chapati/roti ≈ 40g
+     * 1 dosa ≈ 80g
+     * 1 katori/small bowl of dal ≈ 150g
+     * A cola can (330ml) ≈ 330g
+     * 1 banana (medium) ≈ 120g with peel, 90g without
+     * A slice of bread ≈ 30g
+3. Do NOT identify sauces or condiments in trace amounts (salt, pepper, oil drizzle) unless they are a main component.
+4. Reply ONLY with JSON array — no markdown, no explanation:
+   [{"food":"Cooked Basmati Rice","grams":180,"confidence":"high"},{"food":"Grilled Chicken Breast","grams":150,"confidence":"medium"}]
+5. confidence: 'high' if clearly visible, 'medium' if partially obscured, 'low' if guessed`;
 
 async function extractEntitiesFromText(input: string): Promise<FoodEntity[]> {
   const raw = await groqChatRaw(
@@ -727,6 +413,17 @@ async function extractEntitiesFromText(input: string): Promise<FoodEntity[]> {
   })).filter((e: { food: string }) => e.food.length > 0);
 }
 
+function mapConfidence(val: any): number {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    const lower = val.toLowerCase();
+    if (lower === 'high') return 0.9;
+    if (lower === 'medium') return 0.6;
+    if (lower === 'low') return 0.3;
+  }
+  return 0.7;
+}
+
 async function extractEntitiesFromImage(base64: string): Promise<{ name: string; portionGrams: number; confidence: number }[]> {
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -744,7 +441,7 @@ async function extractEntitiesFromImage(base64: string): Promise<{ name: string;
           role: 'user',
           content: [
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
-            { type: 'text', text: 'Identify all food items and estimate portion grams. No nutrition values.' },
+            { type: 'text', text: 'Identify every food item with weights.' },
           ],
         },
       ],
@@ -755,14 +452,189 @@ async function extractEntitiesFromImage(base64: string): Promise<{ name: string;
   const rawText = data.choices?.[0]?.message?.content?.trim() || '';
   if (!rawText) throw new Error('No food detected in the image.');
 
+  // Check for NOT_FOOD response
+  const cleaned = rawText.replace(/```/g, '').trim().toUpperCase();
+  if (cleaned === 'NOT_FOOD' || cleaned.startsWith('NOT_FOOD')) {
+    throw new Error('NOT_FOOD');
+  }
+
   const jsonStr = extractJSON(rawText);
   const parsed = JSON.parse(jsonStr);
   const items = Array.isArray(parsed) ? parsed : (parsed.items || [parsed]);
   return items.map((i: any) => ({
     name: String(i.food || i.name || 'food').trim(),
     portionGrams: Number(i.grams || i.portionGrams) || 100,
-    confidence: Number(i.confidence ?? i.confidence_score ?? 0.7),
+    confidence: mapConfidence(i.confidence ?? i.confidence_score ?? 0.7),
   })).filter((i: { name: string }) => i.name.length > 0);
+}
+
+// ══════════════════════════════════════════════════════════
+//  FIX 4: Branded product detection
+// ══════════════════════════════════════════════════════════
+
+async function handleBrandedProduct(item: { name: string; portionGrams: number; confidence: number }): Promise<FoodItem | null> {
+  try {
+    const restItem = await lookupRestaurantMenu(item.name);
+    if (restItem) {
+      const itemName = `${restItem.chain} — ${restItem.item_name}`;
+      return {
+        name: itemName,
+        quantity: `1 ${restItem.serving_label}`,
+        calories: Math.round(restItem.calories),
+        protein: Math.round(restItem.protein * 10) / 10,
+        carbs: Math.round(restItem.carbs * 10) / 10,
+        fat: Math.round(restItem.fat * 10) / 10,
+        fiber: Math.round((restItem.fiber || 0) * 10) / 10,
+        chain: restItem.chain,
+        servingLabel: restItem.serving_label,
+        isRestaurant: true,
+        totalCalories: Math.round(restItem.calories),
+        totalProtein: Math.round(restItem.protein * 10) / 10,
+        totalCarbs: Math.round(restItem.carbs * 10) / 10,
+        totalFat: Math.round(restItem.fat * 10) / 10,
+        totalFiber: Math.round((restItem.fiber || 0) * 10) / 10,
+      };
+    }
+
+    const db = await getDb();
+    const prefix = item.name.toLowerCase().split(' ')[0];
+    const cached = await db.getFirstAsync<any>(
+      'SELECT * FROM food_cache WHERE LOWER(food_name) LIKE ? LIMIT 1',
+      `%${prefix}%`
+    );
+    if (cached && cached.calories_per_100g > 0) {
+      const ratio = item.portionGrams / 100;
+      return {
+        name: cached.food_name || item.name,
+        quantity: `${item.portionGrams}g`,
+        calories: Math.round(cached.calories_per_100g * ratio),
+        protein: Math.round((cached.protein_per_100g || 0) * ratio * 10) / 10,
+        carbs: Math.round((cached.carbs_per_100g || 0) * ratio * 10) / 10,
+        fat: Math.round((cached.fat_per_100g || 0) * ratio * 10) / 10,
+        fiber: Math.round((cached.fiber_per_100g || 0) * ratio * 10) / 10,
+      };
+    }
+  } catch (e) {
+    console.warn('[nutritionAI] handleBrandedProduct failed:', e);
+  }
+  return null;
+}
+
+// ══════════════════════════════════════════════════════════
+//  FIX 2: Enrich vision items with DB nutrition values
+// ══════════════════════════════════════════════════════════
+
+interface EnrichInput {
+  name: string;
+  grams: number;
+  confidence: number;
+}
+
+interface EnrichedItem {
+  name: string;
+  grams: number;
+  confidence: number;
+  calories_per_100g: number;
+  protein_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  fiber_per_100g: number;
+  source: string;
+  chain?: string;
+  servingLabel?: string;
+  isRestaurant?: boolean;
+  totalCalories?: number;
+  totalProtein?: number;
+  totalCarbs?: number;
+  totalFat?: number;
+  totalFiber?: number;
+}
+
+async function enrichItemsWithNutrition(visionItems: EnrichInput[], userId: string): Promise<EnrichedItem[]> {
+  const enriched: EnrichedItem[] = [];
+  for (const item of visionItems) {
+    try {
+      // Try branded product detection first
+      const branded = await handleBrandedProduct({ name: item.name, portionGrams: item.grams, confidence: item.confidence });
+      if (branded) {
+        const grams = parseInt(branded.quantity) || item.grams;
+        const ratio = grams > 0 ? 100 / grams : 1;
+        enriched.push({
+          name: branded.name,
+          grams,
+          confidence: item.confidence,
+          calories_per_100g: Math.round(branded.calories * ratio),
+          protein_per_100g: Math.round(branded.protein * ratio * 10) / 10,
+          carbs_per_100g: Math.round(branded.carbs * ratio * 10) / 10,
+          fat_per_100g: Math.round(branded.fat * ratio * 10) / 10,
+          fiber_per_100g: Math.round(branded.fiber * ratio * 10) / 10,
+          source: 'bundled',
+          chain: branded.chain,
+          servingLabel: branded.servingLabel,
+          isRestaurant: branded.isRestaurant,
+          totalCalories: branded.totalCalories,
+          totalProtein: branded.totalProtein,
+          totalCarbs: branded.totalCarbs,
+          totalFat: branded.totalFat,
+          totalFiber: branded.totalFiber,
+        });
+        continue;
+      }
+
+      // Fall through to full pipeline
+      const mealLog = await analyzeFood({ text: item.name, userId });
+      const foodItem = mealLog.items[0];
+      if (foodItem) {
+        const grams = parseInt(foodItem.quantity) || item.grams;
+        const ratio = grams > 0 ? 100 / grams : 1;
+        enriched.push({
+          name: canonicalizeFoodName(item.name),
+          grams,
+          confidence: item.confidence,
+          calories_per_100g: Math.round(foodItem.calories * ratio),
+          protein_per_100g: Math.round(foodItem.protein * ratio * 10) / 10,
+          carbs_per_100g: Math.round(foodItem.carbs * ratio * 10) / 10,
+          fat_per_100g: Math.round(foodItem.fat * ratio * 10) / 10,
+          fiber_per_100g: Math.round(foodItem.fiber * ratio * 10) / 10,
+          source: 'bundled',
+          chain: foodItem.chain,
+          servingLabel: foodItem.servingLabel,
+          isRestaurant: foodItem.isRestaurant,
+          totalCalories: foodItem.totalCalories,
+          totalProtein: foodItem.totalProtein,
+          totalCarbs: foodItem.totalCarbs,
+          totalFat: foodItem.totalFat,
+          totalFiber: foodItem.totalFiber,
+        });
+      } else {
+        enriched.push({
+          name: canonicalizeFoodName(item.name),
+          grams: item.grams,
+          confidence: item.confidence,
+          calories_per_100g: 200,
+          protein_per_100g: 10,
+          carbs_per_100g: 20,
+          fat_per_100g: 8,
+          fiber_per_100g: 2,
+          source: 'ai_vision',
+        });
+      }
+    } catch (e) {
+      console.warn('[nutritionAI] enrichItemsWithNutrition failed:', e);
+      enriched.push({
+        name: canonicalizeFoodName(item.name),
+        grams: item.grams,
+        confidence: item.confidence,
+        calories_per_100g: 200,
+        protein_per_100g: 10,
+        carbs_per_100g: 20,
+        fat_per_100g: 8,
+        fiber_per_100g: 2,
+        source: 'ai_vision',
+      });
+    }
+  }
+  return enriched;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -808,6 +680,133 @@ interface Per100g {
   fbr: number;
 }
 
+interface CachedFoodLookup {
+  food_name: string;
+  calories_per_100g: number;
+  protein_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  fiber_per_100g: number;
+  source: FoodDataSource;
+}
+
+function cachedLookupToPer100g(row: CachedFoodLookup): Per100g {
+  return {
+    cal: row.calories_per_100g,
+    prot: row.protein_per_100g,
+    carb: row.carbs_per_100g,
+    fat: row.fat_per_100g,
+    fbr: row.fiber_per_100g,
+  };
+}
+
+function foodResultFromCachedLookup(row: CachedFoodLookup): FoodResult {
+  return {
+    food_name: row.food_name,
+    calories: row.calories_per_100g,
+    protein: row.protein_per_100g,
+    carbs: row.carbs_per_100g,
+    fat: row.fat_per_100g,
+    fiber: row.fiber_per_100g,
+    serving_size: '100g',
+    serving_grams: 100,
+    source: row.source,
+  };
+}
+
+// Layer 4a: Open Food Facts text search (packaged / branded products)
+async function lookupOpenFoodFactsByText(food_key: string): Promise<CachedFoodLookup | null> {
+  try {
+    const url =
+      `https://world.openfoodfacts.org/api/v2/search?search_terms=${encodeURIComponent(food_key)}` +
+      `&page_size=3&fields=product_name,nutriments`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'FitnessApp/1.0 (nutrition tracking)' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const products = data.products || [];
+    if (products.length === 0) return null;
+
+    for (const p of products) {
+      const n = p.nutriments || {};
+      const calories = Number(n['energy-kcal_100g'] || 0);
+      const protein = Number(n['proteins_100g'] || 0);
+      const carbs = Number(n['carbohydrates_100g'] || 0);
+      const fat = Number(n['fat_100g'] || 0);
+      if (calories <= 0 && protein <= 0 && carbs <= 0 && fat <= 0) continue;
+
+      const result: CachedFoodLookup = {
+        food_name: (p.product_name || food_key).toLowerCase(),
+        calories_per_100g: calories,
+        protein_per_100g: protein,
+        carbs_per_100g: carbs,
+        fat_per_100g: fat,
+        fiber_per_100g: Number(n['fiber_100g'] || n['fibre_100g'] || 0),
+        source: 'open_food_facts',
+      };
+      await insertIntoFoodCache(foodResultFromCachedLookup(result));
+      return result;
+    }
+    return null;
+  } catch (e) {
+    console.warn('[off] text lookup failed:', e);
+    return null;
+  }
+}
+
+// Layer 4b: USDA FoodData Central text search (generic whole foods)
+async function lookupUSDAByText(food_key: string): Promise<CachedFoodLookup | null> {
+  const usdaKey = getUsdaApiKey();
+  if (!usdaKey) return null;
+
+  try {
+    const url =
+      `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(food_key)}` +
+      `&api_key=${usdaKey}&pageSize=3&dataType=Foundation,SR%20Legacy`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.foods || data.foods.length === 0) return null;
+
+    const food = data.foods[0];
+    const nutrients = food.foodNutrients || [];
+    const getNutrient = (name: string) => {
+      const n = nutrients.find((nut: any) =>
+        nut.nutrientName?.toLowerCase().includes(name.toLowerCase())
+      );
+      if (!n) return 0;
+      let val = Number(n.value || 0);
+      if (name === 'energy' && String(n.unitName || '').toUpperCase() === 'KJ') {
+        val = val / 4.184;
+      }
+      return val;
+    };
+
+    const calories = getNutrient('energy');
+    const protein = getNutrient('protein');
+    const carbs = getNutrient('carbohydrate');
+    const fat = getNutrient('total lipid');
+    if (calories <= 0 && protein <= 0 && carbs <= 0 && fat <= 0) return null;
+
+    const result: CachedFoodLookup = {
+      food_name: food.description.toLowerCase(),
+      calories_per_100g: calories,
+      protein_per_100g: protein,
+      carbs_per_100g: carbs,
+      fat_per_100g: fat,
+      fiber_per_100g: getNutrient('fiber'),
+      source: 'usda',
+    };
+
+    await insertIntoFoodCache(foodResultFromCachedLookup(result));
+    return result;
+  } catch (e) {
+    console.warn('[usda] text lookup failed:', e);
+    return null;
+  }
+}
+
 async function lookupPer100g(foodName: string): Promise<Per100g | null> {
   const key = foodName.toLowerCase().trim();
   const normalizedKey = key.replace(/[-–—]/g, ' ');
@@ -843,7 +842,7 @@ async function lookupPer100g(foodName: string): Promise<Per100g | null> {
       fat: row.fat_per_100g || 0,
       fbr: row.fiber_per_100g || 0,
     };
-  } catch { return null; }
+  } catch (e) { console.warn('[nutritionAI] lookupPer100g failed:', e); return null; }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -968,6 +967,31 @@ async function processEntity(entity: FoodEntity, userId: string, debug: any[]): 
 
   console.log('[nutritionAI] Processing:', { food: foodName, qty: entity.quantity, unit: entity.unit, grams });
 
+  // LAYER 0: Restaurant menu — exact macros per item, skip per-100g scaling
+  const restItem = await lookupRestaurantMenu(foodName);
+  if (restItem) {
+    const name = `${restItem.chain} — ${restItem.item_name}`;
+    const item: FoodItem = {
+      name,
+      quantity: `1 ${restItem.serving_label}`,
+      calories: Math.round(restItem.calories),
+      protein: Math.round(restItem.protein * 10) / 10,
+      carbs: Math.round(restItem.carbs * 10) / 10,
+      fat: Math.round(restItem.fat * 10) / 10,
+      fiber: Math.round((restItem.fiber || 0) * 10) / 10,
+      chain: restItem.chain,
+      servingLabel: restItem.serving_label,
+      isRestaurant: true,
+      totalCalories: Math.round(restItem.calories),
+      totalProtein: Math.round(restItem.protein * 10) / 10,
+      totalCarbs: Math.round(restItem.carbs * 10) / 10,
+      totalFat: Math.round(restItem.fat * 10) / 10,
+      totalFiber: Math.round((restItem.fiber || 0) * 10) / 10,
+    };
+    debug.push({ food: foodName, restaurant: restItem.item_name, chain: restItem.chain, macros: item, source: 'restaurant_menu' });
+    return item;
+  }
+
   const per100g = await lookupPer100g(foodName);
   if (per100g && per100g.cal > 0) {
     const validated = validateMacros(per100g, grams, foodName);
@@ -1000,7 +1024,53 @@ async function processEntity(entity: FoodEntity, userId: string, debug: any[]): 
     return toFoodItem(foodName, scaled, grams);
   }
 
-  // Layer 5: Deterministic category average fallback — NO AI MACROS
+  // Layer 4a: Open Food Facts text search
+  const offLookup = await lookupOpenFoodFactsByText(foodName);
+  if (offLookup && offLookup.calories_per_100g > 0) {
+    const p100 = cachedLookupToPer100g(offLookup);
+    const validated = validateMacros(p100, grams, foodName);
+    const scaled = scalePer100g(validated, grams);
+    debug.push({ food: foodName, grams, off: offLookup, validated, scaled, source: 'open_food_facts' });
+    return toFoodItem(offLookup.food_name || foodName, scaled, grams);
+  }
+
+  // Layer 4b: USDA FoodData Central text search
+  const usdaLookup = await lookupUSDAByText(foodName);
+  if (usdaLookup && (usdaLookup.calories_per_100g > 0 || usdaLookup.protein_per_100g > 0)) {
+    const p100 = cachedLookupToPer100g(usdaLookup);
+    const validated = validateMacros(p100, grams, foodName);
+    const scaled = scalePer100g(validated, grams);
+    debug.push({ food: foodName, grams, usda: usdaLookup, validated, scaled, source: 'usda' });
+    return toFoodItem(usdaLookup.food_name || foodName, scaled, grams);
+  }
+
+  // Layer 5: Restaurant brand lookup
+  const canonicalResult = canonicalizeRestaurantFood(foodName);
+  if (canonicalResult.confidence !== 'low' && canonicalResult.brand && canonicalResult.calories) {
+    try {
+      const db2 = await getDb();
+      const restRow = await db2.getFirstAsync<any>(
+        `SELECT rf.* FROM restaurant_foods rf
+         JOIN restaurant_brands rb ON rb.id = rf.brand_id
+         WHERE LOWER(rf.canonical_name) = ?`,
+        canonicalResult.canonicalName.toLowerCase()
+      );
+      if (restRow) {
+        const per100gCal = restRow.calories / (restRow.serving_weight / 100);
+        const per100gP = restRow.protein / (restRow.serving_weight / 100);
+        const per100gC = restRow.carbs / (restRow.serving_weight / 100);
+        const per100gF = restRow.fat / (restRow.serving_weight / 100);
+        const per100gFb = (restRow.fiber || 0) / (restRow.serving_weight / 100);
+        const p100: Per100g = { cal: per100gCal, prot: per100gP, carb: per100gC, fat: per100gF, fbr: per100gFb };
+        const validated = validateMacros(p100, grams, foodName);
+        const scaled = scalePer100g(validated, grams);
+        debug.push({ food: foodName, grams, restaurant: restRow.item_name, brand: restRow.brand_name, scaled, source: 'restaurant_db' });
+        return toFoodItem(`${restRow.brand_name} — ${restRow.item_name}`, scaled, grams);
+      }
+    } catch (e) { console.warn('[nutritionAI] processEntity restaurant lookup failed:', e); }
+  }
+
+  // Layer 6: Deterministic category average fallback — NO AI MACROS
   const categoryAvg = await categoryAverageFallback(foodName);
   if (categoryAvg && categoryAvg.cal > 0) {
     const validated = validateMacros(categoryAvg, grams, foodName);
@@ -1105,53 +1175,47 @@ export async function analyzeImageWithAI(uri: string, userId?: string): Promise<
     throw new Error('No food detected. Please take a photo of actual food or use barcode scan.');
   }
 
-  const entities = await extractEntitiesFromImage(base64);
-  if (!entities || entities.length === 0) {
+  let visionEntities: { name: string; portionGrams: number; confidence: number }[];
+  try {
+    visionEntities = await extractEntitiesFromImage(base64);
+  } catch (err: any) {
+    if (err.message === 'NOT_FOOD') {
+      throw new Error('No food detected. Please photograph actual food — not screens, menus, or packaging.');
+    }
+    throw err;
+  }
+
+  if (!visionEntities || visionEntities.length === 0) {
     throw new Error('No food detected in the image. Try a clearer photo with better lighting.');
   }
 
-  const items: FoodAnalysisItem[] = [];
-  const descriptions: string[] = [];
+  // Use enrichItemsWithNutrition for DB-backed nutrition
+  const enrichedItems = await enrichItemsWithNutrition(
+    visionEntities.map(e => ({ name: e.name, grams: e.portionGrams, confidence: e.confidence })),
+    userId || ''
+  );
 
-  for (const e of entities) {
-    let foodItem: FoodItem | null = null;
-    try {
-      const entity: FoodEntity = { food: e.name, quantity: e.portionGrams, unit: 'g', confidence: e.confidence };
-      const debug: any[] = [];
-      foodItem = await processEntity(entity, userId || '', debug);
-    } catch (err) {
-      console.warn(`[nutritionAI] processEntity failed for '${e.name}':`, err);
-    }
-    if (foodItem) {
-      const grams = parseInt(foodItem.quantity) || e.portionGrams;
-      const ratio = grams > 0 ? 100 / grams : 1;
-      items.push({
-        name: foodItem.name,
-        grams,
-        calories_per_100g: Math.round(foodItem.calories * ratio),
-        protein_per_100g: Math.round(foodItem.protein * ratio * 10) / 10,
-        carbs_per_100g: Math.round(foodItem.carbs * ratio * 10) / 10,
-        fat_per_100g: Math.round(foodItem.fat * ratio * 10) / 10,
-        fiber_per_100g: Math.round(foodItem.fiber * ratio * 10) / 10,
-        source: 'bundled',
-        confidence: e.confidence,
-      });
-    } else {
-      items.push({
-        name: e.name,
-        grams: e.portionGrams,
-        calories_per_100g: 200,
-        protein_per_100g: 10,
-        carbs_per_100g: 20,
-        fat_per_100g: 8,
-        fiber_per_100g: 2,
-        source: 'ai_vision',
-        confidence: e.confidence,
-      });
-    }
-    descriptions.push(`${e.name} (${e.portionGrams}g)`);
-  }
+  const items: FoodAnalysisItem[] = enrichedItems.map(e => ({
+    name: e.name,
+    grams: e.grams,
+    calories_per_100g: e.calories_per_100g,
+    protein_per_100g: e.protein_per_100g,
+    carbs_per_100g: e.carbs_per_100g,
+    fat_per_100g: e.fat_per_100g,
+    fiber_per_100g: e.fiber_per_100g,
+    source: e.source as FoodDataSource,
+    confidence: e.confidence,
+    chain: e.chain,
+    servingLabel: e.servingLabel,
+    isRestaurant: e.isRestaurant,
+    totalCalories: e.totalCalories,
+    totalProtein: e.totalProtein,
+    totalCarbs: e.totalCarbs,
+    totalFat: e.totalFat,
+    totalFiber: e.totalFiber,
+  }));
 
+  const descriptions = visionEntities.map(e => `${e.name} (${e.portionGrams}g)`);
   const aiDescription = descriptions.join(', ');
 
   const totalGrams = items.reduce((s, i) => s + i.grams, 0);
@@ -1178,7 +1242,7 @@ export async function analyzeImageWithAI(uri: string, userId?: string): Promise<
           serving_grams: item.grams,
           source: 'ai_vision',
         });
-      } catch {}
+      } catch (e) { console.warn('[nutritionAI] save to food_cache failed:', e); }
     }
     await saveScanToCache(uri, userId, aiDescription, totalCal);
   }
@@ -1295,6 +1359,71 @@ async function seedFoodCache(): Promise<void> {
   return seedPromise;
 }
 
+// ══════════════════════════════════════════════════════════
+//  LAYER 0: Restaurant menu (exact macros per item)
+// ══════════════════════════════════════════════════════════
+
+interface RestaurantMenuItem {
+  id: number;
+  chain: string;
+  chain_region: string;
+  item_name: string;
+  category: string;
+  serving_label: string;
+  serving_grams: number;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  fiber: number;
+  sugar: number;
+  sodium: number;
+  is_veg: number;
+  aliases: string;
+}
+
+async function lookupRestaurantMenu(query: string): Promise<RestaurantMenuItem | null> {
+  try {
+    const db = await getDb();
+    // Migration v11 seeds the table, but ensure init runs
+    const lower = query.toLowerCase().trim();
+    const aliasPattern = `%"${lower}"%`;
+
+    // 1. Exact item name match
+    let row = await db.getFirstAsync<RestaurantMenuItem>(
+      `SELECT * FROM restaurant_menu WHERE LOWER(item_name) = ? LIMIT 1`,
+      lower
+    );
+    if (row) return row;
+
+    // 2. LIKE match on item name
+    row = await db.getFirstAsync<RestaurantMenuItem>(
+      `SELECT * FROM restaurant_menu WHERE LOWER(item_name) LIKE ? LIMIT 1`,
+      `%${lower}%`
+    );
+    if (row) return row;
+
+    // 3. Chain match (e.g. "mcdonalds" -> first item from McDonald's)
+    row = await db.getFirstAsync<RestaurantMenuItem>(
+      `SELECT * FROM restaurant_menu WHERE LOWER(chain) LIKE ? LIMIT 1`,
+      `%${lower}%`
+    );
+    if (row) return row;
+
+    // 4. Alias match
+    row = await db.getFirstAsync<RestaurantMenuItem>(
+      `SELECT * FROM restaurant_menu WHERE LOWER(aliases) LIKE ? LIMIT 1`,
+      aliasPattern
+    );
+    if (row) return row;
+
+    return null;
+  } catch (e) {
+    console.warn('[nutritionAI] food cache lookup failed:', e);
+    return null;
+  }
+}
+
 async function fuzzyLookup(food_key: string): Promise<FoodResult | null> {
   try {
     const db = await getDb();
@@ -1330,7 +1459,7 @@ async function fuzzyLookup(food_key: string): Promise<FoodResult | null> {
       }
     }
     return null;
-  } catch { return null; }
+  } catch (e) { console.warn('[nutritionAI] fuzzyLookup failed:', e); return null; }
 }
 
 async function insertIntoFoodCache(fd: FoodResult): Promise<void> {
@@ -1344,7 +1473,7 @@ async function insertIntoFoodCache(fd: FoodResult): Promise<void> {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       fd.food_name.toLowerCase(), '[]', fd.calories, fd.protein, fd.carbs, fd.fat, fd.fiber, fd.serving_size, fd.serving_grams, fd.source
     );
-  } catch {}
+  } catch (e) { console.warn('[nutritionAI] insertIntoFoodCache failed:', e); }
 }
 
 async function saveToUserHistory(userId: string, fd: FoodResult): Promise<void> {
@@ -1363,7 +1492,7 @@ async function saveToUserHistory(userId: string, fd: FoodResult): Promise<void> 
         userId, fd.food_name.toLowerCase(), '[]', fd.calories, fd.protein, fd.carbs, fd.fat, fd.fiber, fd.serving_size, fd.serving_grams, nowISO(), fd.source
       );
     }
-  } catch {}
+  } catch (e) { console.warn('[nutritionAI] saveToUserHistory failed:', e); }
 }
 
 export async function saveScanToCache(uri: string, userId: string | undefined, foodName: string, calories: number) {
@@ -1373,7 +1502,7 @@ export async function saveScanToCache(uri: string, userId: string | undefined, f
       `INSERT INTO food_scans (user_id, image_uri, food_name, calories, scanned_at) VALUES (?, ?, ?, ?, ?)`,
       userId || '', uri, foodName, calories, new Date().toISOString()
     );
-  } catch {}
+  } catch (e) { console.warn('[nutritionAI] saveScanToCache failed:', e); }
 }
 
 export async function getRecentScans(userId: string, limit = 10) {
@@ -1383,7 +1512,7 @@ export async function getRecentScans(userId: string, limit = 10) {
       `SELECT * FROM food_scans WHERE user_id = ? ORDER BY scanned_at DESC LIMIT ?`,
       userId, limit
     );
-  } catch { return []; }
+  } catch (e) { console.warn('[nutritionAI] getRecentScans failed:', e); return []; }
 }
 
 export async function parseFoodInput(description: string): Promise<MealLog> {
@@ -1423,4 +1552,4 @@ Prefer Indian food options but include variety.`;
   }
 }
 
-export { analyzeImageQuality };
+

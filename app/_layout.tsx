@@ -19,22 +19,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 import { getCurrentUserProfile, defaultHealthProfile } from '@/lib/auth';
 import { clearStoredSession, ensureFreshToken, startPeriodicTokenRefresh, stopPeriodicTokenRefresh } from '@/lib/tokenManager';
-import { hydrateCoachChat } from '@/store/workoutStore';
-import { hydrateMemoryCache } from '@/store/memoryStore';
-import { hydrateNutritionCache } from '@/store/nutritionStore';
-import { useUserStore } from '@/store/userStore';
-import { useModeStore } from '@/store/modeStore';
-import { useTabBarStore } from '@/store/tabBarStore';
+import {
+  useUserStore, useModeStore, useTabBarStore,
+  useNutritionStore, useWorkoutStore, useSplitBuilderStore,
+  useMemoryStore, useAiTrainerStore, useProfileStore,
+  useDashboardStore, useLiveContextStore, useOnboardingStore,
+  hydrateCoachChat, hydrateMemoryCache, hydrateNutritionCache,
+} from '@/store';
 import { syncUserData } from '@/lib/sync';
-import { useNutritionStore } from '@/store/nutritionStore';
-import { useWorkoutStore } from '@/store/workoutStore';
-import { useSplitBuilderStore } from '@/store/splitBuilderStore';
-import { useMemoryStore } from '@/store/memoryStore';
-import { useAiTrainerStore } from '@/store/aiTrainerStore';
-import { useProfileStore } from '@/store/profileStore';
-import { useDashboardStore } from '@/store/dashboardStore';
-import { useLiveContextStore } from '@/store/liveContextStore';
-import { useOnboardingStore } from '@/store/onboardingStore';
 import { COLORS } from '@/constants/theme';
 import { initSentry, setSentryUser, clearSentryUser } from '@/lib/sentry';
 import { trackEvent, identifyUser, resetAnalytics, trackScreenView } from '@/lib/analytics';
@@ -123,6 +115,15 @@ export default function RootLayout() {
       useOnboardingStore.getState().reset();
     };
 
+    // Timeout wrapper — prevents network hangs from blocking boot
+    const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<T>((_, reject) =>
+          setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms)
+        ),
+      ]);
+
     const handleAuthChange = async (session: any, retryCount = 0) => {
       if (_authRetryTimeout.current) {
         clearTimeout(_authRetryTimeout.current);
@@ -139,7 +140,7 @@ export default function RootLayout() {
           return;
         }
         try {
-          const profile = await getCurrentUserProfile(session.user.id);
+          const profile = await withTimeout(getCurrentUserProfile(session.user.id), 15000);
           setUser({ ...profile, email: session.user.email || profile.email });
           if (profile && 'app_mode' in profile) {
             useModeStore.getState().setMode(profile.app_mode || 'normal');
@@ -188,7 +189,7 @@ export default function RootLayout() {
       }
     };
 
-    // SAFETY FALLBACK: If checkSession hangs, force booting to false after 30s.
+    // SAFETY FALLBACK: If checkSession hangs, force booting to false after 15s.
     const safetyTimeout = setTimeout(() => {
       console.warn('[auth-bootstrap] Safety timeout reached. Forcing boot.');
       setLoading(false);
@@ -197,7 +198,7 @@ export default function RootLayout() {
       // Mark that the safety timeout already handled boot — prevents
       // a stale checkSession resolution from clearing an authenticated user later.
       _safetyTimedOut.current = true;
-    }, 30000);
+    }, 15000);
 
     // Two-phase boot:
     //   Phase 1 — Read session from local storage (fast, no network).
@@ -353,7 +354,7 @@ export default function RootLayout() {
 
     if (isAuthenticated && user?.onboarding_complete) {
       const mode = user.app_mode || 'normal';
-      const targetGroup: any = mode === 'ai_trainer' ? '/(ai-trainer)' : '/(tabs)/food';
+      const targetGroup: any = mode === 'ai_trainer' ? '/(ai-trainer)' : '/(tabs)';
       // Already on the correct group — no-op
       if (inTabs && rootSegment === (mode === 'ai_trainer' ? '(ai-trainer)' : '(tabs)')) {
         return;

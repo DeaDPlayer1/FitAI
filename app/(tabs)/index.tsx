@@ -67,29 +67,29 @@ export default function HomeScreen() {
   const insights = useLiveContextStore((s) => s.insights);
   const setInsights = useLiveContextStore((s) => s.setInsights);
 
-  const fetchProfile = useCallback(async () => {
+  const fetchProfile = useCallback(async (userId?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+      const uid = userId || user?.id;
+      if (!uid) return;
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', uid).single();
       if (error) throw error;
       setProfile(data);
     } catch (e: any) { console.error('fetchProfile:', e.message); }
-  }, []);
+  }, [user?.id]);
 
   const dateFetchCounter = useRef(0);
 
-  const fetchMealsForDate = useCallback(async (date: Date) => {
+  const fetchMealsForDate = useCallback(async (date: Date, userId?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const uid = userId || user?.id;
+      if (!uid) return;
       const counter = ++dateFetchCounter.current;
       const start = new Date(date); start.setHours(0, 0, 0, 0);
       const end = new Date(date); end.setHours(23, 59, 59, 999);
       const { data, error } = await supabase
         .from('meal_logs')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', uid)
         .gte('logged_at', start.toISOString())
         .lte('logged_at', end.toISOString())
         .order('logged_at', { ascending: true });
@@ -110,43 +110,43 @@ export default function HomeScreen() {
       setTodayCarbs(totals.carbs);
       setTodayFat(totals.fat);
     } catch (e) { console.error('fetchMealsForDate:', e); }
-  }, []);
+  }, [user?.id]);
 
-  const fetchWaterForDate = useCallback(async (date: Date) => {
+  const fetchWaterForDate = useCallback(async (date: Date, userId?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const uid = userId || user?.id;
+      if (!uid) return;
       const start = new Date(date); start.setHours(0, 0, 0, 0);
       const end = new Date(date); end.setHours(23, 59, 59, 999);
       const { data } = await supabase
         .from('water_logs')
         .select('glasses')
-        .eq('user_id', user.id)
+        .eq('user_id', uid)
         .gte('logged_at', start.toISOString())
         .lte('logged_at', end.toISOString());
       setTodayWater(data?.reduce((s, r) => s + (r.glasses || 0), 0) ?? 0);
     } catch (e: any) { console.error('fetchWaterForDate:', e.message); }
-  }, []);
+  }, [user?.id]);
 
-  const fetchStepsForDate = useCallback(async (date: Date) => {
+  const fetchStepsForDate = useCallback(async (date: Date, userId?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const uid = userId || user?.id;
+      if (!uid) return;
       const dateStr = date.toISOString().split('T')[0];
       const { data } = await supabase
         .from('activity_logs')
         .select('steps')
-        .eq('user_id', user.id)
+        .eq('user_id', uid)
         .eq('logged_at', dateStr)
         .single();
       setTodaySteps(data?.steps || 0);
     } catch (e: any) { console.error('fetchStepsForDate:', e.message); }
-  }, []);
+  }, [user?.id]);
 
-  const fetchCompletedDays = useCallback(async () => {
+  const fetchCompletedDays = useCallback(async (userId?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const uid = userId || user?.id;
+      if (!uid) return;
       const base = new Date();
       base.setDate(base.getDate() - base.getDay());
       base.setHours(0, 0, 0, 0);
@@ -156,23 +156,23 @@ export default function HomeScreen() {
       const { data } = await supabase
         .from('workout_logs')
         .select('logged_at')
-        .eq('user_id', user.id)
+        .eq('user_id', uid)
         .gte('logged_at', base.toISOString())
         .lte('logged_at', weekEnd.toISOString());
       setCompletedDates(new Set(data?.map((w) => new Date(w.logged_at).toDateString()) ?? []));
     } catch (e: any) { console.error('fetchCompletedDays:', e.message); }
-  }, []);
+  }, [user?.id]);
 
-  const fetchStreak = useCallback(async () => {
+  const fetchStreak = useCallback(async (userId?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const uid = userId || user?.id;
+      if (!uid) return;
       const sixtyDaysAgo = new Date();
       sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
       const { data } = await supabase
         .from('meal_logs')
         .select('logged_at')
-        .eq('user_id', user.id)
+        .eq('user_id', uid)
         .gte('logged_at', sixtyDaysAgo.toISOString())
         .order('logged_at', { ascending: false });
       if (!data?.length) { setStreakDays(0); return; }
@@ -187,13 +187,13 @@ export default function HomeScreen() {
       }
       setStreakDays(streak);
     } catch (e: any) { console.error('fetchStreak:', e.message); }
-  }, []);
+  }, [user?.id]);
 
-  const fetchAllForDate = useCallback(async (date: Date) => {
+  const fetchAllForDate = useCallback(async (date: Date, userId?: string) => {
     await Promise.all([
-      fetchMealsForDate(date),
-      fetchWaterForDate(date),
-      fetchStepsForDate(date),
+      fetchMealsForDate(date, userId),
+      fetchWaterForDate(date, userId),
+      fetchStepsForDate(date, userId),
     ]);
   }, [fetchMealsForDate, fetchWaterForDate, fetchStepsForDate]);
 
@@ -202,18 +202,18 @@ export default function HomeScreen() {
       const load = async () => {
         setLoading(true);
         setSelectedDate(new Date());
-        const { data: { user } } = await supabase.auth.getUser();
+        const uid = user?.id;
         await Promise.all([
-          fetchProfile(),
-          fetchAllForDate(new Date()),
-          fetchStreak(),
-          fetchCompletedDays(),
-          user?.id ? useSplitBuilderStore.getState().loadSplit(user.id) : Promise.resolve(),
+          fetchProfile(uid),
+          fetchAllForDate(new Date(), uid),
+          fetchStreak(uid),
+          fetchCompletedDays(uid),
+          uid ? useSplitBuilderStore.getState().loadSplit(uid) : Promise.resolve(),
         ]);
         setLoading(false);
       };
       load();
-    }, [fetchProfile, fetchAllForDate, fetchStreak, fetchCompletedDays])
+    }, [fetchProfile, fetchAllForDate, fetchStreak, fetchCompletedDays, user?.id])
   );
 
   const calorieGoal = useMemo(() => profile?.calorie_goal ?? 1800, [profile]);
@@ -296,17 +296,17 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    const uid = user?.id;
     setSelectedDate(new Date());
     await Promise.all([
-      fetchProfile(),
-      fetchAllForDate(new Date()),
-      fetchStreak(),
-      fetchCompletedDays(),
-      user?.id ? useSplitBuilderStore.getState().loadSplit(user.id) : Promise.resolve(),
+      fetchProfile(uid),
+      fetchAllForDate(new Date(), uid),
+      fetchStreak(uid),
+      fetchCompletedDays(uid),
+      uid ? useSplitBuilderStore.getState().loadSplit(uid) : Promise.resolve(),
     ]);
     setRefreshing(false);
-  }, [fetchProfile, fetchAllForDate, fetchStreak, fetchCompletedDays]);
+  }, [fetchProfile, fetchAllForDate, fetchStreak, fetchCompletedDays, user?.id]);
 
   const handleDayPress = useCallback(async (date: Date) => {
     setSelectedDate(date);
@@ -343,26 +343,28 @@ export default function HomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setTodayWater((p) => p + 1);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      await supabase.from('water_logs').insert({ user_id: user.id, glasses: 1, logged_at: new Date().toISOString() });
-    } catch (e) { /* silent */ }
-  }, []);
+      const uid = user?.id;
+      if (!uid) { setTodayWater((p) => p - 1); return; }
+      await supabase.from('water_logs').insert({ user_id: uid, glasses: 1, logged_at: new Date().toISOString() });
+    } catch (e) { setTodayWater((p) => Math.max(0, p - 1)); }
+  }, [user?.id]);
 
   const calorieRemaining = calorieGoal - todayCalories;
   const userName = profile?.full_name?.split(' ')[0] || 'there';
   const greeting = getTimeGreeting();
 
+  const splitDaysFromStore = useSplitBuilderStore((s) => s.days);
+
   // Today's workout info
   const todayWorkoutData = useMemo(() => {
     const todayName = DAY_NAMES[new Date().getDay()];
-    const day = useSplitBuilderStore.getState().days.find((d: any) => d.dayName === todayName);
+    const day = splitDaysFromStore.find((d: any) => d.dayName === todayName);
     return {
       workoutName: day?.workoutName,
       hasWorkoutToday: !!day && !day.isRest,
       isRestDay: !!day?.isRest,
     };
-  }, []);
+  }, [splitDaysFromStore]);
 
   // Calendar workout dates set (for past dates that have entries)
   const workoutDatesSet = useMemo(() => {
@@ -381,8 +383,25 @@ export default function HomeScreen() {
   const isSelectedToday = selectedDate.toDateString() === new Date().toDateString();
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.bg.primary }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg.primary }}>
       <StatusBar barStyle="light-content" />
+      {loading ? (
+        <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 20 }}>
+          <View style={{ width: '50%', height: 20, borderRadius: 10, backgroundColor: theme.colors.surface, marginBottom: 16 }} />
+          <View style={{ width: '70%', height: 14, borderRadius: 7, backgroundColor: theme.colors.surface, marginBottom: 24 }} />
+          <View style={{ borderRadius: 20, backgroundColor: theme.colors.surface, padding: 20, marginBottom: 16 }}>
+            <View style={{ width: '40%', height: 16, borderRadius: 8, backgroundColor: theme.colors.border.subtle, marginBottom: 12 }} />
+            <View style={{ width: '100%', height: 48, borderRadius: 12, backgroundColor: theme.colors.border.subtle, marginBottom: 12 }} />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: theme.colors.border.subtle }} />
+              <View style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: theme.colors.border.subtle }} />
+            </View>
+          </View>
+          <View style={{ width: '100%', height: 200, borderRadius: 20, backgroundColor: theme.colors.surface, marginBottom: 16 }} />
+          <View style={{ width: '100%', height: 100, borderRadius: 20, backgroundColor: theme.colors.surface, marginBottom: 16 }} />
+          <View style={{ width: '100%', height: 120, borderRadius: 20, backgroundColor: theme.colors.surface }} />
+        </View>
+      ) : (
       <ScrollView
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -489,6 +508,7 @@ export default function HomeScreen() {
 
         <View style={{ height: 24 }} />
       </ScrollView>
-    </View>
+      )}
+    </SafeAreaView>
   );
 }

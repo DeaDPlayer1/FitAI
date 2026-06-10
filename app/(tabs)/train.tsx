@@ -65,6 +65,7 @@ export default function TrainingScreen() {
   const insets = useSafeAreaInsets();
   const [templates, setTemplates] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const [performanceMap, setPerformanceMap] = useState<Map<string, ExercisePerformanceData>>(new Map());
 
@@ -102,7 +103,7 @@ export default function TrainingScreen() {
       fetchExerciseData(data || []);
     } catch (e) {
       console.error('Error fetching templates:', e);
-    } finally { setRefreshing(false); }
+    } finally { setRefreshing(false); setIsLoading(false); }
   };
 
   const fetchExerciseData = async (tmpls: any[]) => {
@@ -158,6 +159,23 @@ export default function TrainingScreen() {
     }
   };
 
+  const completedDays = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const [day, tpl] of Object.entries(dayMap)) {
+      if (!tpl) { map[day] = false; continue; }
+      const exs = getExercises(tpl);
+      let completed = 0;
+      let planned = 0;
+      for (const ex of exs) {
+        const p = performanceMap.get(ex.name);
+        if (p) completed += p.totalCompletedSets;
+        planned += ex.sets;
+      }
+      map[day] = planned > 0 && completed >= planned;
+    }
+    return map;
+  }, [dayMap, performanceMap]);
+
   const allLoaded = templates.length > 0;
 
   // ── Sticky CTA ──
@@ -210,7 +228,7 @@ export default function TrainingScreen() {
                     workoutName={template ? parseWorkoutName(template) : undefined}
                     exerciseCount={exercises.length}
                     isToday={isDayToday}
-                    isCompleted={false}
+                    isCompleted={completedDays[day] || false}
                     isRest={!template}
                     expanded={expandedDay === day}
                     onToggle={() => setExpandedDay(prev => prev === day ? null : day)}
@@ -226,8 +244,25 @@ export default function TrainingScreen() {
             })}
           </View>
 
+          {/* ── Loading Skeleton ── */}
+          {isLoading && (
+            <Animated.View entering={FadeIn} style={st.emptyState}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <View key={i} style={{ width: '100%', marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: 16, backgroundColor: theme.colors.surface }}>
+                    <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: theme.colors.border.subtle }} />
+                    <View style={{ flex: 1, gap: 6 }}>
+                      <View style={{ width: '60%', height: 14, borderRadius: 7, backgroundColor: theme.colors.border.subtle }} />
+                      <View style={{ width: '30%', height: 10, borderRadius: 5, backgroundColor: theme.colors.border.subtle }} />
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </Animated.View>
+          )}
+
           {/* ── Empty State ── */}
-          {!allLoaded && (
+          {!isLoading && !allLoaded && (
             <Animated.View entering={FadeIn} style={st.emptyState}>
               <View style={st.emptyIconBox}>
                 <Feather name="calendar" size={36} color="rgba(106,73,250,0.3)" />

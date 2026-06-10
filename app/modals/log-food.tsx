@@ -1,21 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, StyleSheet, Linking,
+  Dimensions, Platform, Keyboard, KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-
 import Animated, {
-  FadeInUp, FadeInDown,
-  useSharedValue, useAnimatedStyle,
-  withTiming, withDelay, Easing,
+  FadeInUp, FadeInDown, FadeIn, BounceIn, Layout,
+  useSharedValue, useAnimatedStyle, useAnimatedProps,
+  withSpring, withTiming, withSequence, withRepeat, withDelay,
+  Easing, interpolate, runOnJS,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle } from 'react-native-svg';
 import { theme } from '@/constants/theme';
 import { useUserStore } from '@/store/userStore';
-import { analyzeFood, analyzeImageWithAI, type MealLog, type FoodItem as OldFoodItem, type FoodAnalysisItem } from '@/lib/nutritionAI';
+import { analyzeFood, analyzeImageWithAI, type FoodItem as OldFoodItem, type FoodAnalysisItem } from '@/lib/nutritionAI';
+import { useScaleOnPress, useHapticTap, usePulseAnimation } from '@/lib/premiumHooks';
+import { premiumStyles as P, macroColors } from '@/lib/premiumTokens';
+import { supabase } from '@/lib/supabase';
+import { syncUserData } from '@/lib/sync';
+import { useToast } from '@/components/ui/ToastNotification';
+import { getRecentFoods } from '@/lib/foodSearch';
+import { withErrorBoundary } from '@/utils/withErrorBoundary';
 
 function oldToAnalysis(old: OldFoodItem): FoodAnalysisItem {
   const grams = parseInt(old.quantity) || 100;
@@ -28,73 +37,227 @@ function oldToAnalysis(old: OldFoodItem): FoodAnalysisItem {
     carbs_per_100g: Math.round(old.carbs * r * 10) / 10,
     fat_per_100g: Math.round(old.fat * r * 10) / 10,
     fiber_per_100g: Math.round(old.fiber * r * 10) / 10,
+    chain: old.chain,
+    servingLabel: old.servingLabel,
+    isRestaurant: old.isRestaurant,
+    totalCalories: old.totalCalories,
+    totalProtein: old.totalProtein,
+    totalCarbs: old.totalCarbs,
+    totalFat: old.totalFat,
+    totalFiber: old.totalFiber,
   };
 }
 
-import { supabase } from '@/lib/supabase';
-import { syncUserData } from '@/lib/sync';
-import { useToast } from '@/components/ui/ToastNotification';
-
 type Step = 'input' | 'parsing' | 'review';
 
-function AnimatedProgressFill({ pct, color, delay: delayMs }: { pct: number; color: string; delay: number }) {
-  const w = useSharedValue(0);
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const C = theme.colors;
+
+function MacroRing({ pct, color, size = 80, strokeWidth = 6, label, value }: {
+  pct: number; color: string; size?: number; strokeWidth?: number; label?: string; value?: string;
+}) {
+  const progress = useSharedValue(0);
+  const r = (size - strokeWidth) / 2;
+  const circ = 2 * Math.PI * r;
   useEffect(() => {
-    w.value = withDelay(delayMs, withTiming(pct, { duration: 600, easing: Easing.out(Easing.quad) }));
-  }, []);
-  const anim = useAnimatedStyle(() => ({ width: `${w.value * 100}%` }));
-  return <Animated.View style={[styles.macroProgressFill, { backgroundColor: color }, anim]} />;
+    progress.value = withTiming(Math.min(pct, 1), { duration: 1000, easing: Easing.out(Easing.cubic) });
+  }, [pct]);
+  const animatedProps = useAnimatedProps(() => {
+    const offset = circ * (1 - progress.value);
+    return { strokeDashoffset: offset };
+  });
+  return (
+    <View style={{ alignItems: 'center', gap: 4 }}>
+      <View style={{ width: size, height: size }}>
+        <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+          <Circle cx={size / 2} cy={size / 2} r={r} stroke={color + '1A'} strokeWidth={strokeWidth} fill="none" />
+          <AnimatedCircle
+            cx={size / 2} cy={size / 2} r={r}
+            stroke={color} strokeWidth={strokeWidth} fill="none"
+            strokeLinecap="round"
+            strokeDasharray={circ}
+            strokeDashoffset={circ}
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+            animatedProps={animatedProps}
+          />
+        </Svg>
+        {value && (
+          <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: size * 0.22, fontWeight: '800', color: color }}>{value}</Text>
+          </View>
+        )}
+      </View>
+      {label && <Text style={{ fontSize: 10, fontWeight: '600', color: C.text.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</Text>}
+    </View>
+  );
 }
 
-export default function LogFoodModal() {
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+// ── Method config: consistent icon colors, white cards ──
+const methodActions = [
+  { icon: 'camera', label: 'Scan', color: '#6C3CE1', route: '/modals/camera-capture' },
+  { icon: 'maximize', label: 'Barcode', color: '#3B82F6', route: '/modals/barcode-scanner' },
+  { icon: 'mic', label: 'Voice', color: '#10B981', route: undefined },
+  { icon: 'image', label: 'Gallery', color: '#F59E0B', route: 'gallery' },
+  { icon: 'plus-circle', label: 'Quick Add', color: '#EC4899', route: '/modals/food-detail?quickAdd=true' },
+  { icon: 'search', label: 'Search', color: '#4F46E5', route: '/modals/food-search' },
+];
+
+function MethodButton({ action, index, onPress }: {
+  action: typeof methodActions[0]; index: number; onPress: () => void;
+}) {
+  const { animatedStyle, onPressIn, onPressOut } = useScaleOnPress();
+  return (
+    <Animated.View entering={FadeInUp.delay(250 + index * 50).springify()}>
+      <Animated.View style={animatedStyle}>
+        <TouchableOpacity
+          onPress={onPress}
+          onPressIn={onPressIn}
+          onPressOut={onPressOut}
+          activeOpacity={0.85}
+          style={styles.methodBtn}
+        >
+          <Feather name={action.icon as any} size={26} color={action.color} />
+          <Text style={styles.methodLabel}>{action.label}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
+function RecentFoodCard({ item, index }: { item: any; index: number }) {
+  const { animatedStyle, onPressIn, onPressOut } = useScaleOnPress();
+  const router = useRouter();
+  return (
+    <Animated.View entering={FadeInDown.delay(400 + index * 80).springify()}>
+      <Animated.View style={animatedStyle}>
+        <TouchableOpacity
+          onPress={() => {
+            router.push({
+              pathname: '/modals/food-detail',
+              params: {
+                foodId: 0, foodName: item.food_name,
+                returnTo: 'log-food',
+                recentCal: String(Math.round(item.calories_per_100g)),
+                recentProt: String(item.protein_per_100g),
+                recentCarb: String(item.carbs_per_100g),
+                recentFat: String(item.fat_per_100g),
+              },
+            });
+          }}
+          onPressIn={onPressIn}
+          onPressOut={onPressOut}
+          activeOpacity={0.9}
+          style={styles.recentCard}
+        >
+          <View style={[styles.recentCardDot, { backgroundColor: C.primary }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.recentFoodName} numberOfLines={1}>{item.food_name}</Text>
+            <Text style={styles.recentFoodCals}>{Math.round(item.calories_per_100g)} kcal/100g</Text>
+          </View>
+          <Feather name="chevron-right" size={16} color={C.text.muted} />
+        </TouchableOpacity>
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
+function LogFoodModal() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useUserStore();
-
-  const rawDate = Array.isArray(params.date) ? params.date[0] : params.date;
-  const selectedDate = rawDate ? (() => {
-    const d = new Date(rawDate as string);
-    return isNaN(d.getTime()) ? new Date() : d;
-  })() : new Date();
+  const { showToast } = useToast();
+  const hapticTap = useHapticTap();
+  const { animatedStyle: pulseStyle, loopPulse } = usePulseAnimation();
 
   const [step, setStep] = useState<Step>('input');
   const [foodText, setFoodText] = useState('');
-  const [parsedMeal, setParsedMeal] = useState<MealLog | null>(null);
-  const [saving, setSaving] = useState(false);
-  const savingRef = useRef(false);
-  const [isVisionAnalysis, setIsVisionAnalysis] = useState(false);
-  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [saving] = useState(false);
   const [progressText, setProgressText] = useState('');
+  const [recentFoods, setRecentFoods] = useState<any[]>([]);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const inputFocus = useSharedValue(0);
+  const shimmerX = useSharedValue(-300);
+  const inputRef = useRef<TextInput>(null);
 
-  const { showToast } = useToast();
+  const inputAnim = useAnimatedStyle(() => ({
+    borderColor: inputFocus.value ? 'rgba(108,59,255,0.4)' : 'rgba(108,59,255,0.12)',
+  }));
+
+  const shimmerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: shimmerX.value }],
+  }));
+
+  useEffect(() => {
+    getRecentFoods(user?.id, undefined, 8).then(setRecentFoods).catch(() => {});
+  }, [user?.id]);
+
+  useEffect(() => {
+    loopPulse();
+    shimmerX.value = withRepeat(
+      withTiming(SCREEN_WIDTH + 300, { duration: 2000, easing: Easing.linear }),
+      -1, false,
+    );
+  }, []);
+
+  // Keyboard listeners
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+
+  function getMealType(): string {
+    const mt = (params.meal_type as string) || '';
+    if (mt) return mt;
+    const h = new Date().getHours();
+    if (h >= 5 && h < 10) return 'breakfast';
+    if (h >= 10 && h < 14) return 'lunch';
+    if (h >= 14 && h < 18) return 'dinner';
+    return 'snack';
+  }
+
+  function getMealPrompt(): string {
+    const h = new Date().getHours();
+    const firstName = user?.name?.split(' ')[0] || 'there';
+    if (h >= 5 && h < 10) return `Good morning, ${firstName} — what did you have for breakfast?`;
+    if (h >= 10 && h < 14) return `Good afternoon, ${firstName} — what are you having for lunch?`;
+    if (h >= 14 && h < 18) return `Good evening, ${firstName} — dinner time, what did you eat?`;
+    return `Hey ${firstName} — late snack?`;
+  }
+
+  function getMealTitle(): string {
+    const mt = getMealType();
+    const titles: Record<string, string> = {
+      breakfast: 'Log Breakfast',
+      lunch: 'Log Lunch',
+      dinner: 'Log Dinner',
+      snack: 'Log Snack',
+    };
+    return titles[mt] || 'Log Food';
+  }
 
   const pickFromGallery = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Photo library access is needed to import food images.',
-          [{ text: 'Open Settings', onPress: () => Linking.openSettings() }, { text: 'Cancel' }]
-        );
+        Alert.alert('Permission Required', 'Photo library access is needed to import food images.', [
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          { text: 'Cancel' },
+        ]);
         return;
       }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [4, 3],
         quality: 1,
-        base64: false,
       });
-
       if (result.canceled) return;
-
       const uri = result.assets[0].uri;
-      setSelectedImageUri(uri);
-      setIsVisionAnalysis(true);
       setStep('parsing');
-
+      setProgressText('Analyzing your meal image...');
       const analysisResult = await analyzeImageWithAI(uri, user?.id);
       (router as any).replace({
         pathname: '/modals/confirm-food',
@@ -105,14 +268,15 @@ export default function LogFoodModal() {
           inputType: 'gallery',
         },
       });
-    } catch (err: any) {
+    } catch {
       setStep('input');
-      showToast('Could not analyse this image. Try a clearer photo or enter manually.', 'error');
+      showToast('Could not analyse this image. Try a clearer photo.', 'error');
     }
   };
 
   const handleParse = async () => {
     if (!foodText.trim()) return;
+    hapticTap();
     setStep('parsing');
     setProgressText('Identifying food items...');
     try {
@@ -129,500 +293,327 @@ export default function LogFoodModal() {
         },
       });
     } catch (e: any) {
-      Alert.alert('AI Error', e.message || 'Could not parse food. Try again.');
+      Alert.alert('AI Error', e.message || 'Could not parse food.');
       setStep('input');
     }
   };
 
-  const handleConfirm = async () => {
-    if (!parsedMeal || !user) return;
-    if (savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user?.id;
-      if (!userId) throw new Error('Not authenticated.');
-
-      const rows = parsedMeal.items.map((item) => ({
-        user_id: userId,
-        food_name: item.name,
-        calories: item.calories,
-        protein_g: item.protein,
-        carbs_g: item.carbs,
-        fat_g: item.fat,
-        meal_type: params.mealType || parsedMeal.mealType,
-        logged_at: selectedDate.toISOString(),
-      }));
-
-      const { error } = await supabase.from('meal_logs').insert(rows);
-      if (error) throw error;
-
-      await syncUserData(userId);
-      router.replace('/(tabs)' as any);
-    } catch (err: any) {
-      Alert.alert('Error', err.message);
-    } finally {
-      setSaving(false);
-      savingRef.current = false;
+  const suggestionChips = useMemo(() => {
+    const base = ['2 rotis', 'paneer sabzi', 'rice bowl', 'protein shake', 'oats', 'banana'];
+    if (recentFoods.length > 0) {
+      const fromRecent = recentFoods.slice(0, 6).map(r => r.food_name);
+      return [...new Set([...fromRecent, ...base])].slice(0, 8);
     }
-  };
+    return base;
+  }, [recentFoods]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
-          <Feather name="x" size={24} color={theme.colors.text.primary} />
+    <View style={P.container}>
+      <LinearGradient colors={[C.bg.primary, C.surfaceTint, C.bg.primary]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
+
+      {/* Header */}
+      <Animated.View entering={FadeInDown.springify()} style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+          <Feather name="x" size={22} color="#1F2937" />
         </TouchableOpacity>
-        <Text style={styles.title}>Log Nutrition</Text>
-        <View style={{ width: 44 }} />
-      </View>
+        <Text style={styles.headerTitle}>{getMealTitle()}</Text>
+        <View style={{ width: 40 }} />
+      </Animated.View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        {step === 'input' && (
-          <Animated.View entering={FadeInUp}>
-            <View style={styles.inputCard}>
-              <Text style={styles.inputLabel}>What did you eat?</Text>
-              <TextInput
-                style={styles.textArea}
-                placeholder="e.g. 2 eggs, 200g cooked rice, 100g chicken, 1 banana..."
-                placeholderTextColor={theme.colors.textMuted}
-                value={foodText}
-                onChangeText={setFoodText}
-                multiline
-              />
-              
-              <View style={styles.toolRow}>
-                <TouchableOpacity 
-                  onPress={() => router.push({ pathname: '/modals/food-search', params: { returnTo: 'log-food' } })}
-                  style={styles.toolBtn}
-                >
-                  <Feather name="search" size={20} color={theme.colors.primaryDeep} />
-                  <Text style={styles.toolLabel}>Search</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={() => router.push('/modals/camera-capture')}
-                  style={styles.toolBtn}
-                >
-                  <Feather name="camera" size={20} color={theme.colors.primaryDeep} />
-                  <Text style={styles.toolLabel}>Camera</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={pickFromGallery}
-                  style={styles.toolBtn}
-                >
-                  <Feather name="image" size={20} color={theme.colors.primaryDeep} />
-                  <Text style={styles.toolLabel}>Gallery</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={() => router.push('/modals/barcode-scanner')}
-                  style={styles.toolBtn}
-                >
-                  <Text style={{ fontSize: 20, lineHeight: 22 }}>📦</Text>
-                  <Text style={styles.toolLabel}>Barcode</Text>
-                </TouchableOpacity>
-              </View>
+      {step === 'input' && (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ padding: 20, paddingBottom: keyboardVisible ? 120 : 160 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Contextual prompt */}
+            <Animated.View entering={FadeInUp.springify()} style={{ marginBottom: 20 }}>
+              <Text style={styles.prompt}>{getMealPrompt()}</Text>
+            </Animated.View>
 
-              {selectedImageUri && (
-                <View style={styles.thumbnailRow}>
-                  <Animated.Image source={{ uri: selectedImageUri }} style={styles.thumbnailImage} />
-                  <TouchableOpacity onPress={() => setSelectedImageUri(null)} style={styles.thumbnailClear}>
-                    <Feather name="x" size={14} color="#FFF" />
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              <TouchableOpacity style={styles.analyzeBtn} onPress={handleParse}>
-                <Text style={styles.analyzeBtnText}>Analyze with AI</Text>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
-        )}
-
-        {step === 'parsing' && (
-          <View style={styles.loadingState}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={styles.loadingText}>
-              {isVisionAnalysis
-                ? 'Analyzing image...'
-                : progressText || 'Analyzing...'}
-            </Text>
-          </View>
-        )}
-
-        {step === 'review' && parsedMeal && (
-          <Animated.View entering={FadeInDown} style={styles.reviewContainer}>
-            {/* ── Premium Header ── */}
-            <View style={styles.reviewHeader}>
-              <View style={styles.successBadge}>
-                <Feather name="check" size={16} color="#FFFFFF" />
-              </View>
-              <View style={styles.reviewHeaderText}>
-                <Text style={styles.reviewHeaderTitle}>Meal Logged</Text>
-                <Text style={styles.reviewHeaderSub}>AI analysis complete</Text>
-              </View>
-              <TouchableOpacity onPress={() => setStep('input')} style={styles.editIconBtn} activeOpacity={0.7}>
-                <Feather name="edit-2" size={16} color={theme.colors.text.muted} />
-              </TouchableOpacity>
-            </View>
-
-            {/* ── Calorie Hero Card ── */}
-            <LinearGradient
-              colors={[theme.colors.primary, theme.colors.primaryDeep]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1.2 }}
-              style={styles.calorieHero}
-            >
-              <View style={styles.calorieHeroContent}>
-                <View style={styles.mealTag}>
-                  <Feather name="clock" size={10} color="rgba(255,255,255,0.7)" />
-                  <Text style={styles.mealTagText}>
-                    {params.mealType || parsedMeal.mealType || 'Meal'} · {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                </View>
-                <Text style={styles.calorieValue}>{parsedMeal.totalCalories}</Text>
-                <Text style={styles.calorieLabel}>calories</Text>
-                <View style={styles.goalProgress}>
-                  <View style={styles.goalProgressBg}>
-                    {user?.goals?.calories ? (
-                      <View style={[styles.goalProgressFill, { width: `${Math.min((parsedMeal.totalCalories / user.goals.calories) * 100, 100)}%` }]} />
-                    ) : null}
-                  </View>
-                  <Text style={[styles.goalProgressText, parsedMeal.totalCalories > (user?.goals?.calories || 0) && { color: '#FF6B6B' }]}>
-                    {user?.goals?.calories
-                      ? (() => {
-                          const diff = user.goals.calories - parsedMeal.totalCalories;
-                          return diff < 0
-                            ? `${diff} kcal over`
-                            : `${diff} kcal remaining`;
-                        })()
-                      : 'Set a calorie goal in settings'}
-                  </Text>
-                </View>
-              </View>
-            </LinearGradient>
-
-            {/* ── Per-Item Breakdown ── */}
-            {parsedMeal.items.length > 1 && (
-              <Animated.View entering={FadeInDown.delay(150)} style={styles.itemsSection}>
-                <Text style={styles.itemsSectionTitle}>Food Items</Text>
-                {parsedMeal.items.map((item, idx) => (
-                  <Animated.View
-                    key={item.name + idx}
-                    entering={FadeInDown.delay(200 + idx * 50)}
-                    style={styles.itemCard}
-                  >
-                    <View style={styles.itemCardMain}>
-                      <Text style={styles.itemName}>{item.name}</Text>
-                      <Text style={styles.itemQty}>{item.quantity}</Text>
-                    </View>
-                    <View style={styles.itemMacros}>
-                      <Text style={styles.itemCal}>{item.calories} kcal</Text>
-                      <Text style={styles.itemMacroSub}>
-                        P {item.protein}g · C {item.carbs}g · F {item.fat}g
-                      </Text>
-                    </View>
-                  </Animated.View>
-                ))}
+            {/* Text Input Card */}
+            <Animated.View entering={FadeInUp.delay(80).springify()}>
+              <Animated.View style={[styles.inputCard, inputAnim]}>
+                <TextInput
+                  ref={inputRef}
+                  style={styles.inputField}
+                  placeholder="e.g. 2 eggs, 200g rice, 100g chicken..."
+                  placeholderTextColor={C.text.muted}
+                  value={foodText}
+                  onChangeText={setFoodText}
+                  multiline
+                  onFocus={() => { inputFocus.value = withSpring(1); }}
+                  onBlur={() => { inputFocus.value = withSpring(0); }}
+                />
               </Animated.View>
-            )}
+            </Animated.View>
 
-            {/* ── Macro Breakdown ── */}
-            <View style={styles.macroSection}>
-              {[
-                { label: 'Protein', value: parsedMeal.totalProtein, unit: 'g', color: '#FB7185', bgColor: 'rgba(251,113,133,0.12)', goal: user?.goals?.protein || 150 },
-                { label: 'Carbs', value: parsedMeal.totalCarbs, unit: 'g', color: '#F59E0B', bgColor: 'rgba(245,158,11,0.12)', goal: user?.goals?.carbs || 250 },
-                { label: 'Fat', value: parsedMeal.totalFat, unit: 'g', color: '#3B82F6', bgColor: 'rgba(59,130,246,0.12)', goal: user?.goals?.fat || 65 },
-              ].map((macro, i) => {
-                const pct = macro.value / macro.goal;
-                const diff = macro.goal - macro.value;
-                const diffText = diff < 0
-                  ? `${diff}${macro.unit} over`
-                  : `${diff}${macro.unit} left`;
-                return (
-                <Animated.View
-                  key={macro.label}
-                  entering={FadeInDown.delay(200 + i * 100)}
-                  style={[styles.macroCard, { backgroundColor: macro.bgColor, borderColor: macro.color + '25' }] as any}
-                >
-                  <View style={styles.macroTop}>
-                    <Text style={[styles.macroValue, { color: macro.color }]}>{macro.value}{macro.unit}</Text>
-                    <Text style={[styles.macroPct, diff < 0 && { color: '#FF6B6B' }]}>{Math.round(pct * 100)}%</Text>
-                  </View>
-                  <Text style={styles.macroLabel}>{macro.label}</Text>
-                  <View style={styles.macroProgressBg}>
-                    <AnimatedProgressFill pct={Math.min(pct, 1)} color={macro.color} delay={300 + i * 100} />
-                  </View>
-                  <Text style={[styles.macroRemaining, diff < 0 && { color: '#FF6B6B' }]}>{diffText}</Text>
-                </Animated.View>
-                );
-              })}
-            </View>
+            {/* Quick suggestion chips — OUTSIDE the input card */}
+            <Animated.View entering={FadeInUp.delay(120).springify()} style={{ marginTop: 14 }}>
+              <Text style={styles.sectionLabel}>QUICK ADD</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, paddingVertical: 8 }}
+              >
+                {suggestionChips.map((chip) => (
+                  <TouchableOpacity
+                    key={chip}
+                    onPress={() => setFoodText((p) => (p ? `${p}, ${chip}` : chip))}
+                    style={styles.suggestionChip}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.suggestionChipText}>{chip}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </Animated.View>
 
-            {/* ── AI Insight ── */}
-            <Animated.View entering={FadeInDown.delay(500)} style={styles.insightCard}>
-              <View style={styles.insightRow}>
-                <Feather name="zap" size={14} color={theme.colors.primary} />
-                <Text style={styles.insightText}>
-                  {parsedMeal.totalProtein < (user?.goals?.protein || 150) * 0.3
-                    ? 'Low protein detected. Consider adding a lean protein source.'
-                    : parsedMeal.totalCarbs > (user?.goals?.carbs || 250) * 0.5
-                    ? 'Higher-carb meal. Balance with protein-rich foods later.'
-                    : 'Great macro balance. Stay hydrated and keep consistent.'}
-                </Text>
+            {/* Method buttons — 2×3 grid, consistent style */}
+            <Animated.View entering={FadeInUp.delay(180).springify()} style={{ marginTop: 20 }}>
+              <Text style={styles.sectionLabel}>OR USE</Text>
+              <View style={styles.methodGrid}>
+                {methodActions.map((action, i) => (
+                  <MethodButton
+                    key={action.label}
+                    action={action}
+                    index={i}
+                    onPress={() => {
+                      hapticTap();
+                      if (action.route === 'gallery') { pickFromGallery(); return; }
+                      if (action.label === 'Voice') { showToast('Voice input coming soon', 'info'); return; }
+                      if (action.route) router.push(action.route as any);
+                    }}
+                  />
+                ))}
               </View>
             </Animated.View>
 
-            {/* ── CTAs ── */}
-            <View style={styles.ctaSection}>
-              <TouchableOpacity style={styles.primaryCta} onPress={handleConfirm} disabled={saving} activeOpacity={0.85}>
+            {/* Analyze with AI button — no dot */}
+            <Animated.View entering={FadeInUp.delay(300).springify()}>
+              <Animated.View style={[pulseStyle, { marginTop: 20 }]}>
+              <TouchableOpacity
+                onPress={handleParse}
+                activeOpacity={0.85}
+                style={styles.analyzeBtn}
+              >
                 <LinearGradient
-                  colors={[theme.colors.primary, theme.colors.primaryDeep]}
+                  colors={['#6C3BFF', '#8B5CF6', '#6C3BFF']}
                   start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.primaryCtaGradient}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.analyzeGradient}
                 >
-                  {saving ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Feather name="check" size={18} color="#FFFFFF" />
-                      <Text style={styles.primaryCtaText}>Log Meal</Text>
-                    </>
-                  )}
+                  <View style={styles.analyzeShimmerWrap}>
+                    <Animated.View style={[styles.analyzeShimmer, shimmerStyle]} />
+                  </View>
+                  <Text style={styles.analyzeIcon}>⚡</Text>
+                  <Text style={styles.analyzeText}>Analyze with AI</Text>
                 </LinearGradient>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.secondaryCta} onPress={() => setStep('input')} activeOpacity={0.7}>
-                <Text style={styles.secondaryCtaText}>Edit Entry</Text>
+              </Animated.View>
+            </Animated.View>
+
+            {/* Recent Foods */}
+            {recentFoods.length > 0 && (
+              <Animated.View entering={FadeInUp.delay(350).springify()} style={{ marginTop: 20 }}>
+                <View style={P.spaceBetween}>
+                  <Text style={P.sectionTitle}>Recent Meals</Text>
+                  <TouchableOpacity
+                    onPress={() => router.push({ pathname: '/modals/food-search', params: { returnTo: 'log-food' } })}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: C.primary }}>See All</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ marginTop: 12, gap: 8 }}>
+                  {recentFoods.slice(0, 5).map((item, i) => (
+                    <RecentFoodCard key={item.id || i} item={item} index={i} />
+                  ))}
+                </View>
+              </Animated.View>
+            )}
+          </ScrollView>
+
+          {/* Keyboard dismiss bar */}
+          {keyboardVisible && (
+            <Animated.View entering={FadeIn.duration(150)} style={styles.keyboardBar}>
+              <TouchableOpacity
+                onPress={() => { Keyboard.dismiss(); }}
+                style={styles.keyboardDismissBtn}
+              >
+                <Text style={styles.keyboardDismissText}>⌄ Done</Text>
               </TouchableOpacity>
-            </View>
+            </Animated.View>
+          )}
+        </KeyboardAvoidingView>
+      )}
+
+      {step === 'parsing' && (
+        <View style={styles.parsingContainer}>
+          <Animated.View entering={BounceIn.springify()} style={styles.parsingRing}>
+            <Animated.View
+              style={{
+                width: 120, height: 120, borderRadius: 60,
+                borderWidth: 6, borderColor: C.primary + '20',
+                alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Animated.View
+                style={{
+                  position: 'absolute', width: 120, height: 120, borderRadius: 60,
+                  borderWidth: 6, borderColor: 'transparent',
+                  borderTopColor: C.primary, borderRightColor: C.primary,
+                }}
+              />
+              <Feather name="zap" size={32} color={C.primary} />
+            </Animated.View>
           </Animated.View>
-        )}
-      </ScrollView>
+          <Animated.Text entering={FadeInUp.delay(200).springify()} style={styles.parsingText}>
+            {progressText || 'Analyzing...'}
+          </Animated.Text>
+          <Animated.Text entering={FadeInUp.delay(350).springify()} style={styles.parsingSub}>
+            AI is identifying foods & looking up nutrition data
+          </Animated.Text>
+          <ActivityIndicator size="small" color={C.primary} style={{ marginTop: 24 }} />
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 60,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    backgroundColor: theme.colors.surface,
-    ...theme.shadow.navbar,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingTop: Platform.OS === 'ios' ? 60 : 20, paddingHorizontal: 20, paddingBottom: 8,
+    backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#F0EDFF',
   },
-  closeBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 20, fontWeight: '800', color: theme.colors.text.primary },
-  
-  scroll: { flex: 1 },
-  scrollContent: { padding: 20 },
-
-  inputCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 28,
-    padding: 24,
-    ...theme.shadow.card,
-  },
-  inputLabel: { fontSize: 18, fontWeight: '800', color: theme.colors.text.primary, marginBottom: 16 },
-  textArea: {
-    backgroundColor: theme.colors.background,
-    borderRadius: 20,
-    padding: 20,
-    fontSize: 16,
-    fontWeight: '600',
-    color: theme.colors.text.primary,
-    minHeight: 160,
-    textAlignVertical: 'top',
-  },
-  toolRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
-  toolBtn: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: theme.colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  toolLabel: {
-    fontSize: 9, fontWeight: '600', color: theme.colors.text.muted,
-  },
-  toolBtnActive: { backgroundColor: theme.colors.danger },
-  thumbnailRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16, padding: 12,
-    backgroundColor: theme.colors.background, borderRadius: 16,
-  },
-  thumbnailImage: { width: 56, height: 56, borderRadius: 12 },
-  thumbnailClear: {
-    width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  analyzeBtn: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: 18,
-    paddingVertical: 18,
-    alignItems: 'center',
-    marginTop: 24,
-    ...theme.shadow.button,
-  },
-  analyzeBtnText: { fontSize: 16, fontWeight: '800', color: '#000' },
-
-  loadingState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 100, gap: 20 },
-  loadingText: { fontSize: 14, fontWeight: '700', color: theme.colors.textSecondary },
-
-  reviewContainer: {
-    gap: 20,
-  },
-
-  reviewHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    paddingVertical: 4,
-  },
-  successBadge: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#34C759',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  reviewHeaderText: { flex: 1 },
-  reviewHeaderTitle: {
-    fontSize: 20, fontWeight: '800', color: theme.colors.text.primary,
-  },
-  reviewHeaderSub: {
-    fontSize: 13, fontWeight: '500', color: theme.colors.text.muted, marginTop: 2,
-  },
-  editIconBtn: {
+  headerBtn: {
     width: 40, height: 40, borderRadius: 14,
-    backgroundColor: theme.colors.bg.secondary,
-    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#F5F3FF', alignItems: 'center', justifyContent: 'center',
+  },
+  headerTitle: {
+    fontSize: 18, fontWeight: '700', color: '#1F2937',
+    textAlign: 'center',
+  },
+  prompt: {
+    fontSize: 14, fontWeight: '500', color: '#6E6E73', lineHeight: 20,
   },
 
-  calorieHero: {
-    borderRadius: 24, padding: 24, overflow: 'hidden', ...theme.shadow.glow,
+  // ── Input Card ──
+  inputCard: {
+    backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1.5,
+    borderColor: 'rgba(108,59,255,0.12)', padding: 16,
+    shadowColor: '#6C3BFF', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 12, elevation: 2,
   },
-  calorieHeroContent: { gap: 8 },
-  mealTag: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 12, paddingVertical: 5,
-    borderRadius: 20, alignSelf: 'flex-start',
-  },
-  mealTagText: {
-    fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.75)',
-  },
-  calorieValue: {
-    fontSize: 56, fontWeight: '900', color: '#FFFFFF',
-    letterSpacing: -2, fontVariant: ['tabular-nums'],
-    marginTop: 4,
-  },
-  calorieLabel: {
-    fontSize: 15, fontWeight: '600', color: 'rgba(255,255,255,0.6)',
-    textTransform: 'uppercase', letterSpacing: 1,
-  },
-  goalProgress: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
-  goalProgressBg: {
-    flex: 1, height: 4, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 2,
-    overflow: 'hidden',
-  },
-  goalProgressFill: { height: '100%', backgroundColor: '#FFFFFF', borderRadius: 2 },
-  goalProgressText: {
-    fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.6)', minWidth: 110,
+  inputField: {
+    fontSize: 15, fontWeight: '500', color: '#1A1A2E',
+    minHeight: 80, maxHeight: 140, textAlignVertical: 'top', lineHeight: 22,
   },
 
-  itemsSection: {
-    gap: 8,
+  // ── Sections ──
+  sectionLabel: {
+    fontSize: 11, fontWeight: '700', color: '#AEAEB2',
+    textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4,
   },
-  itemsSectionTitle: {
-    fontSize: 14, fontWeight: '700', color: theme.colors.text.primary,
-    marginBottom: 4,
+
+  // ── Suggestion Chips ──
+  suggestionChip: {
+    paddingHorizontal: 16, paddingVertical: 9, borderRadius: 20,
+    backgroundColor: '#F5F3FF', borderWidth: 1, borderColor: '#EBE5FF',
   },
-  itemCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: theme.colors.border.soft,
+  suggestionChipText: {
+    fontSize: 13, fontWeight: '600', color: '#6C3BFF',
   },
-  itemCardMain: {
-    flex: 1,
-    marginRight: 12,
+
+  // ── Method Grid (2×3) ──
+  methodGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8,
   },
-  itemName: {
-    fontSize: 15, fontWeight: '700', color: theme.colors.text.primary,
-    textTransform: 'capitalize',
+  methodBtn: {
+    alignItems: 'center', justifyContent: 'center', gap: 8,
+    width: (SCREEN_WIDTH - 40 - 20) / 3 - 14,
+    height: 90,
+    backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1.5, borderColor: '#F0EDFF',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 2,
   },
-  itemQty: {
-    fontSize: 12, fontWeight: '500', color: theme.colors.text.muted,
-    marginTop: 2,
+  methodLabel: {
+    fontSize: 13, fontWeight: '500', color: '#6E6E73', textAlign: 'center',
   },
-  itemMacros: {
+
+  // ── Analyze Button ──
+  analyzeBtn: {
+    borderRadius: 14, overflow: 'hidden',
+    height: 52,
+    shadowColor: '#6C3BFF', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 12, elevation: 4,
+  },
+  analyzeGradient: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, height: 52, paddingHorizontal: 24, overflow: 'hidden',
+  },
+  analyzeShimmerWrap: { ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
+  analyzeShimmer: {
+    width: 100, height: '100%',
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    transform: [{ skewX: '-20deg' }],
+  },
+  analyzeIcon: {
+    fontSize: 18,
+  },
+  analyzeText: {
+    fontSize: 16, fontWeight: '700', color: '#FFF',
+  },
+
+  // ── Recent Foods ──
+  recentCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#FFFFFF', borderRadius: 16,
+    padding: 14, borderWidth: 1, borderColor: '#F0EDFF',
+    shadowColor: '#6C3BFF', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.03, shadowRadius: 8, elevation: 1,
+  },
+  recentCardDot: {
+    width: 10, height: 10, borderRadius: 5,
+  },
+  recentFoodName: {
+    fontSize: 14, fontWeight: '700', color: '#1F2937',
+  },
+  recentFoodCals: {
+    fontSize: 11, fontWeight: '500', color: '#AEAEB2', marginTop: 1,
+  },
+
+  // ── Keyboard Dismiss Bar ──
+  keyboardBar: {
+    backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#F0EDFF',
+    paddingVertical: 6, paddingHorizontal: 20,
     alignItems: 'flex-end',
   },
-  itemCal: {
-    fontSize: 16, fontWeight: '800', color: theme.colors.primary,
-    fontVariant: ['tabular-nums'],
+  keyboardDismissBtn: {
+    paddingVertical: 4, paddingHorizontal: 12,
   },
-  itemMacroSub: {
-    fontSize: 11, fontWeight: '500', color: theme.colors.text.muted,
-    marginTop: 1,
+  keyboardDismissText: {
+    fontSize: 15, fontWeight: '600', color: '#6C3BFF',
   },
 
-  macroSection: {
-    flexDirection: 'row', gap: 10,
+  // ── Parsing ──
+  parsingContainer: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40,
   },
-  macroCard: {
-    flex: 1, borderRadius: 20, padding: 16, borderWidth: 1, gap: 6,
+  parsingRing: {
+    width: 120, height: 120, alignItems: 'center', justifyContent: 'center',
   },
-  macroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  macroValue: {
-    fontSize: 20, fontWeight: '800',
-    fontVariant: ['tabular-nums'],
+  parsingRingInner: {
+    position: 'absolute', alignItems: 'center', justifyContent: 'center',
   },
-  macroPct: {
-    fontSize: 11, fontWeight: '700', color: theme.colors.text.muted,
+  parsingText: {
+    fontSize: 20, fontWeight: '800', color: '#1F2937', marginTop: 24,
   },
-  macroLabelDefault: {
-    fontSize: 11, fontWeight: '600', color: theme.colors.text.muted,
-    textTransform: 'uppercase', letterSpacing: 0.5,
-  },
-  macroLabel: {
-    fontSize: 11, fontWeight: '600', color: theme.colors.text.muted,
-    textTransform: 'uppercase', letterSpacing: 0.5,
-  },
-  macroProgressBg: {
-    height: 3, backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: 2,
-    overflow: 'hidden', marginTop: 4,
-  },
-  macroProgressFill: { height: '100%', borderRadius: 2 },
-  macroRemaining: {
-    fontSize: 11, fontWeight: '700', color: theme.colors.text.muted,
-    marginTop: 2,
-  },
-
-  insightCard: {
-    backgroundColor: 'rgba(106,73,250,0.06)', borderRadius: 20, padding: 16,
-    borderWidth: 1, borderColor: 'rgba(106,73,250,0.12)',
-  },
-  insightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  insightText: {
-    flex: 1, fontSize: 13, fontWeight: '500', color: theme.colors.text.muted,
-    lineHeight: 19,
-  },
-
-  ctaSection: { gap: 12, paddingBottom: 20 },
-  primaryCta: { borderRadius: 20, overflow: 'hidden', ...theme.shadow.button },
-  primaryCtaGradient: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, paddingVertical: 18, paddingHorizontal: 24,
-  },
-  primaryCtaText: { fontSize: 17, fontWeight: '800', color: '#FFFFFF' },
-  secondaryCta: { alignItems: 'center', paddingVertical: 12 },
-  secondaryCtaText: {
-    fontSize: 14, fontWeight: '700', color: theme.colors.text.muted,
+  parsingSub: {
+    fontSize: 13, fontWeight: '500', color: '#6E6E73', marginTop: 6, textAlign: 'center',
   },
 });
+
+export default withErrorBoundary(LogFoodModal, 'Could not load food logger');

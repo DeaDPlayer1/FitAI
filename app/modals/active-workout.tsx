@@ -10,7 +10,7 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import Animated, {
   FadeInDown, FadeInUp, FadeIn, ZoomIn,
   useSharedValue, useAnimatedStyle,
-  withTiming, withSpring, withRepeat, withSequence,
+  withTiming, withRepeat, withSequence,
   interpolate, Easing,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
@@ -90,7 +90,7 @@ function RestTimerOverlay({
   }, []);
 
   return (
-    <Animated.View entering={FadeInUp.springify().damping(14)} style={s.restOverlay}>
+    <Animated.View entering={FadeInUp.duration(300)} style={s.restOverlay}>
       <View style={s.restContent}>
         <Text style={s.restHeading}>REST</Text>
         <BreathingRing seconds={seconds} total={90} />
@@ -157,7 +157,7 @@ function SetCard({
 
   return (
     <Animated.View
-      entering={FadeInDown.delay(index * 50).springify().damping(16)}
+      entering={FadeInDown.delay(index * 50).duration(300)}
       style={[
         s.setCard,
         set.isCompleted && s.setCardDone,
@@ -480,7 +480,7 @@ export default function ActiveWorkoutModal() {
         </View>
         <ScrollView style={{ flex: 1, paddingHorizontal: 16 }} showsVerticalScrollIndicator={false}>
           {[0, 1, 2].map((i) => (
-            <Animated.View key={i} entering={FadeInDown.delay(i * 120).springify()}
+            <Animated.View key={i} entering={FadeInDown.delay(i * 120).duration(300)}
               style={{ backgroundColor: '#1A1A1F', borderRadius: 20, padding: 20, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 }}>
                 <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.05)' }} />
@@ -696,7 +696,7 @@ export default function ActiveWorkoutModal() {
         {/* ── Exercise Jump Modal ── */}
         {showJumpModal && (
           <TouchableOpacity style={s.jumpOverlay} activeOpacity={1} onPress={() => setShowJumpModal(false)}>
-            <Animated.View entering={FadeInDown.springify()} style={s.jumpSheet}>
+            <Animated.View entering={FadeInDown.duration(250)} style={s.jumpSheet}>
               <Text style={s.jumpTitle}>Jump to Exercise</Text>
               {exercises.map((ex, idx) => {
                 const done = ex.sets.every(s => s.isCompleted);

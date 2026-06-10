@@ -159,6 +159,19 @@ export function getAvailableUnits(
 /**
  * Estimate initial base nutrition from per-100g values and a serving description.
  */
+/**
+ * Extract embedded amount from a serving description for count-based units.
+ * e.g. "1 can (330ml)" → 330, "1 piece (200g)" → 200
+ */
+function extractCountAmount(servingDesc: string): { value: number; unit: 'g' | 'ml' } | null {
+  if (!servingDesc) return null;
+  const mlMatch = servingDesc.match(/\((\d+\.?\d*)\s*ml\)/i);
+  if (mlMatch) return { value: parseFloat(mlMatch[1]), unit: 'ml' };
+  const gMatch = servingDesc.match(/\((\d+\.?\d*)\s*g\b\)/i);
+  if (gMatch) return { value: parseFloat(gMatch[1]), unit: 'g' };
+  return null;
+}
+
 export function estimateBaseNutrition(
   per100g: {
     calories: number;
@@ -172,17 +185,36 @@ export function estimateBaseNutrition(
   servingDesc: string,
   servingGrams?: number,
 ): BaseNutrition {
-  const grams = servingGrams || parseServingGrams(servingDesc) || 100;
-
   const parsedUnit = detectServingUnit(servingDesc);
   const unit = parsedUnit || 'g';
 
-  const ratio = grams / 100;
+  const unitCat = UNIT_META[unit]?.category;
+
+  let baseValue: number;
+  if (servingGrams) {
+    baseValue = servingGrams;
+  } else if (unit === 'ml') {
+    baseValue = parseServingMl(servingDesc) || 100;
+  } else if (unit === 'g') {
+    baseValue = parseServingGrams(servingDesc) || 100;
+  } else if (unitCat === 'count') {
+    // Count-based unit with embedded amount like "1 can (330ml)" or "1 piece (200g)"
+    const embedded = extractCountAmount(servingDesc);
+    if (embedded) {
+      baseValue = embedded.value;
+    } else {
+      baseValue = parseServingGrams(servingDesc) || 100;
+    }
+  } else {
+    baseValue = parseServingGrams(servingDesc) || 100;
+  }
+
+  const ratio = baseValue / 100;
 
   return {
-    baseServingValue: unit === 'g' || unit === 'ml' ? grams : 1,
+    baseServingValue: unit === 'g' || unit === 'ml' ? baseValue : 1,
     baseServingUnit: unit,
-    baseServingLabel: servingDesc || `${grams}g`,
+    baseServingLabel: servingDesc || `${baseValue}g`,
     calories: Math.round(per100g.calories * ratio),
     protein_g: round1(per100g.protein * ratio),
     carbs_g: round1(per100g.carbs * ratio),
@@ -269,7 +301,12 @@ export function parseServingString(s: string): { value: number; unit: ServingUni
 }
 
 function parseServingGrams(s: string): number | null {
-  const match = s.match(/(\d+\.?\d*)\s*g/i);
+  const match = s.match(/\b(\d+\.?\d*)\s*g\b/i);
+  return match ? parseFloat(match[1]) : null;
+}
+
+function parseServingMl(s: string): number | null {
+  const match = s.match(/\b(\d+\.?\d*)\s*ml\b/i);
   return match ? parseFloat(match[1]) : null;
 }
 

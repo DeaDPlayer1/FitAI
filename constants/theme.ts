@@ -7,17 +7,25 @@
  */
 
 const palette = {
-  // PRIMARY — Lavender/Purple brand
-  purple: '#6A49FA',
-  purpleDeep: '#453284',
-  purpleSoft: '#EDE9FE',
-  purpleGlow: 'rgba(106,73,250,0.15)',
+  // PRIMARY — Rich Electric Purple
+  purple: '#6C3BFF',
+  purpleDeep: '#4A1FB8',
+  purpleSoft: '#EEEBFF',
+  purpleGlow: 'rgba(108,59,255,0.15)',
 
-  // SECONDARY — Soft supportive colors
+  // SECONDARY — Gradient blue-purple accents
   skyBlue: '#C6E6FF',
   skyBlueSoft: '#EFF6FF',
-  softPink: '#FEDADA',
-  softPinkTint: '#FFF1F1',
+  softPink: '#FFD6DD',
+  softPinkTint: '#FFF5F6',
+
+  // MACRO COLORS
+  protein: '#FB7185',
+  proteinSoft: '#FFE5E9',
+  carbs: '#F59E0B',
+  carbsSoft: '#FFF3E0',
+  fat: '#3B82F6',
+  fatSoft: '#DBEAFE',
 
   // SEMANTIC
   success: '#22C55E',
@@ -27,10 +35,10 @@ const palette = {
   danger: '#EF4444',
   dangerSoft: '#FEE2E2',
 
-  // NEUTRALS
-  background: '#F6F5FB',
+  // NEUTRALS — off-white with lavender tint
+  background: '#F7F6FC',
   surface: '#FFFFFF',
-  surfaceTint: '#F0EFFE',
+  surfaceTint: '#F0EEFF',
   text: '#1B1B1F',
   textSecondary: '#6E6E73',
   textMuted: '#AEAEB2',
@@ -39,6 +47,11 @@ const palette = {
   // Focus / Live mode
   focus: '#1B1B1F',
   focusElevated: '#2A2A2F',
+
+  // Glassmorphism
+  glass: 'rgba(255,255,255,0.72)',
+  glassBorder: 'rgba(255,255,255,0.5)',
+  glassShadow: 'rgba(108,59,255,0.08)',
 };
 
 const colors = {
@@ -134,8 +147,8 @@ const colors = {
 
   // Gradients
   gradient: {
-    hero: [palette.purple, palette.purpleDeep] as [string, string],
-    heroSoft: [palette.purple, '#7C65FB'] as [string, string],
+    hero: [palette.purple, '#8B5CF6'] as [string, string],
+    heroSoft: ['rgba(108,59,255,0.9)', 'rgba(139,92,246,0.7)'] as [string, string],
     heroSkyBlue: [palette.skyBlue, '#A5D4FF'] as [string, string],
     heroPink: [palette.softPink, '#FBBEBE'] as [string, string],
     heroSuccess: [palette.success, '#16A34A'] as [string, string],
@@ -146,6 +159,19 @@ const colors = {
     insightCoach: ['#F5F3FF', '#EDE9FE'] as [string, string],
     insightMotivation: [palette.softPinkTint, '#FEDADA'] as [string, string],
   },
+
+  // Macro colors
+  protein: palette.protein,
+  proteinSoft: palette.proteinSoft,
+  carbs: palette.carbs,
+  carbsSoft: palette.carbsSoft,
+  fat: palette.fat,
+  fatSoft: palette.fatSoft,
+
+  // Glass
+  glass: palette.glass,
+  glassBorder: palette.glassBorder,
+  glassShadow: palette.glassShadow,
 
   // Top-level aliases
   purple: palette.purple,
@@ -160,9 +186,9 @@ const colors = {
   textSecondary: palette.textSecondary,
   info: '#3B82F6',
   green: palette.success,
-  blue: '#60A5FA',
+  blue: palette.fat,
   red: palette.danger,
-  orange: '#F97316',
+  orange: palette.carbs,
   card: '#FFFFFF',
   shadow: 'rgba(0,0,0,0.06)',
 };
@@ -329,6 +355,13 @@ const shadow = {
     shadowRadius: 14,
     elevation: 5,
   },
+  glass: {
+    shadowColor: palette.purple,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 32,
+    elevation: 5,
+  },
   orange: {
     shadowColor: palette.warning,
     shadowOffset: { width: 0, height: 8 },
@@ -371,9 +404,9 @@ export const COLORS = {
   text: colors.text.primary,
   textSecondary: colors.text.secondary,
   textMuted: colors.text.muted,
-  protein: palette.success,
-  carbs: palette.warning,
-  fat: colors.primary,
+  protein: palette.protein,
+  carbs: palette.carbs,
+  fat: palette.fat,
   purple: colors.primary,
   orange: colors.warning,
   green: colors.success,

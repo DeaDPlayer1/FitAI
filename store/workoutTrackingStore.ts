@@ -296,7 +296,7 @@ export const useWorkoutTrackingStore = create<WorkoutTrackingState>((set, get) =
       }
     }, 1000);
 
-    set({ timerIntervalId: newIntervalId });
+    set({ timerIntervalId: newIntervalId as unknown as number });
   },
 
   addRestTime: (seconds) => {
@@ -317,7 +317,7 @@ export const useWorkoutTrackingStore = create<WorkoutTrackingState>((set, get) =
     const id = setInterval(() => {
       set((state) => ({ elapsedSeconds: state.elapsedSeconds + 1 }));
     }, 1000);
-    set({ elapsedIntervalId: id });
+    set({ elapsedIntervalId: id as unknown as number });
   },
 
   stopElapsedTimer: () => {

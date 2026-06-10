@@ -10,10 +10,10 @@ export default function OnboardingLayout() {
     >
       <Stack.Screen name="welcome" options={{ animation: 'fade' }} />
       <Stack.Screen name="goal" />
-      <Stack.Screen name="experience" />
-      <Stack.Screen name="frequency" />
-      <Stack.Screen name="equipment" />
+      <Stack.Screen name="gender" />
       <Stack.Screen name="stats" />
+      <Stack.Screen name="activity" />
+      <Stack.Screen name="pace" />
       <Stack.Screen name="create-account" />
       <Stack.Screen name="summary" />
     </Stack>

@@ -1,16 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
 import { clearStoredSession } from './tokenManager';
-import { useUserStore } from '@/store/userStore';
-import { useNutritionStore } from '@/store/nutritionStore';
-import { useWorkoutStore } from '@/store/workoutStore';
-import { useSplitBuilderStore } from '@/store/splitBuilderStore';
-import { useMemoryStore } from '@/store/memoryStore';
-import { useAiTrainerStore } from '@/store/aiTrainerStore';
-import { useProfileStore } from '@/store/profileStore';
-import { useDashboardStore } from '@/store/dashboardStore';
-import { useLiveContextStore } from '@/store/liveContextStore';
-import { useOnboardingStore } from '@/store/onboardingStore';
+import {
+  useUserStore, useNutritionStore, useWorkoutStore,
+  useSplitBuilderStore, useMemoryStore, useAiTrainerStore,
+  useProfileStore, useDashboardStore, useLiveContextStore,
+  useOnboardingStore,
+} from '@/store';
 
 export type FitnessGoal = 'fat_loss' | 'muscle_gain' | 'recomposition' | 'strength' | 'maintenance';
 export type ExperienceLevel = 'beginner' | 'intermediate' | 'advanced';

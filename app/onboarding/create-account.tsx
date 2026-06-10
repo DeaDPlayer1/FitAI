@@ -9,12 +9,14 @@ import { signUpUser, updateUserProfile } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { useUserStore } from '@/store/userStore';
 import { useOnboardingStore } from '@/store/onboardingStore';
-import { COLORS } from '@/constants/theme';
+import { useNutritionStore } from '@/store/nutritionStore';
+import { calculateAll, type Gender, type ActivityLevel, type GoalType, type WeeklyPace } from '@/lib/tdee';
 
 export default function CreateAccountScreen() {
   const router = useRouter();
   const { setUser } = useUserStore();
-  const { data } = useOnboardingStore();
+  const { data, reset } = useOnboardingStore();
+  const { setCalorieGoal } = useNutritionStore();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -29,15 +31,22 @@ export default function CreateAccountScreen() {
   const passwordsMatch = password === confirmPassword;
   const isValid = name.trim() && email.trim() && password.length >= 8 && passwordsMatch;
 
-  const mapGoalToEnum = (goal: string | null): string => {
-    switch (goal) {
-      case 'fat_loss': return 'fat_loss';
-      case 'muscle_gain': return 'muscle_gain';
-      case 'endurance': return 'strength';
-      case 'active': return 'maintenance';
-      default: return 'fat_loss';
-    }
-  };
+  const result = React.useMemo(() => {
+    if (!data.gender || !data.weight || !data.height || !data.age || !data.activityLevel) return null;
+    const goal = (data.goal || 'maintain') as GoalType;
+    const pace = (goal === 'maintain' ? '0.5' : (data.weeklyPace || '0.5')) as WeeklyPace;
+    return calculateAll(
+      data.gender as Gender,
+      parseFloat(data.weight),
+      data.weightUnit,
+      parseFloat(data.height),
+      data.heightUnit,
+      parseInt(data.age),
+      data.activityLevel as ActivityLevel,
+      goal,
+      pace,
+    );
+  }, [data]);
 
   const handleSignUp = async () => {
     if (!isValid) {
@@ -66,35 +75,50 @@ export default function CreateAccountScreen() {
       setUser(profile);
       await AsyncStorage.setItem('@has_account', 'true').catch(() => {});
 
+      const targetCalories = result?.targetCalories || 1800;
+      const proteinG = result?.proteinG || 150;
+      const carbsG = result?.carbsG || 200;
+      const fatG = result?.fatG || 60;
+
       await updateUserProfile(profile.id, {
         name: name.trim(),
         app_mode: 'normal',
         onboarding_complete: false,
         health_profile: {
-          goal: mapGoalToEnum(data.goal) as any,
+          goal: data.goal === 'lose' ? 'fat_loss' : data.goal === 'gain' ? 'muscle_gain' : 'maintenance',
           age: data.age ? parseInt(data.age) : null,
+          gender: data.gender as any,
           height: data.height ? parseFloat(data.height) : null,
           heightUnit: data.heightUnit,
           weight: data.weight ? parseFloat(data.weight) : null,
           weightUnit: data.weightUnit,
-          experience_level: (data.experienceLevel ?? null) as any,
-          equipment: (data.equipment ?? null) as any,
-          available_days: data.frequency ?? null,
-          conditions: [],
-          gender: null,
           targetWeight: null,
-          activity_level: null,
+          activity_level: data.activityLevel as any,
           diet_type: null,
           injuries: null,
           sleep_hours: null,
           stress_level: null,
           cardio_preference: null,
+          experience_level: null,
+          equipment: null,
+          available_days: null,
+          conditions: [],
+        },
+        goals: {
+          calories: targetCalories,
+          protein: proteinG,
+          carbs: carbsG,
+          fat: fatG,
+          water: 8,
+          steps: 10000,
         },
       });
 
-      await updateUserProfile(profile.id, { onboarding_complete: true });
+      setCalorieGoal(targetCalories);
 
+      await updateUserProfile(profile.id, { onboarding_complete: true });
       setUser({ ...profile, onboarding_complete: true });
+      reset();
       router.replace('/onboarding/summary');
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -126,7 +150,7 @@ export default function CreateAccountScreen() {
           </TouchableOpacity>
           <View style={styles.dotsRow}>
             {Array.from({ length: 8 }).map((_, i) => (
-              <View key={i} style={[styles.dot, i <= 6 && styles.dotActive]} />
+              <View key={i} style={[styles.dot, i <= 5 && styles.dotActive]} />
             ))}
           </View>
           <View style={styles.backBtn} />
@@ -136,7 +160,19 @@ export default function CreateAccountScreen() {
           <Text style={styles.heading}>Create your account</Text>
           <Text style={styles.subtitle}>Free forever. No credit card needed.</Text>
 
-          {/* Name */}
+          {result && (
+            <View style={styles.calPreview}>
+              <Text style={styles.calPreviewLabel}>Your daily target</Text>
+              <Text style={styles.calPreviewValue}>{result.targetCalories}</Text>
+              <Text style={styles.calPreviewUnit}>calories</Text>
+              <View style={styles.calPreviewMacros}>
+                <Text style={styles.calPreviewMacro}>P {result.proteinG}g</Text>
+                <Text style={styles.calPreviewMacro}>C {result.carbsG}g</Text>
+                <Text style={styles.calPreviewMacro}>F {result.fatG}g</Text>
+              </View>
+            </View>
+          )}
+
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Full Name</Text>
             <View style={[styles.inputWrap, focused === 'name' && styles.inputWrapFocused]}>
@@ -154,7 +190,6 @@ export default function CreateAccountScreen() {
             </View>
           </View>
 
-          {/* Email */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Email Address</Text>
             <View style={[styles.inputWrap, focused === 'email' && styles.inputWrapFocused]}>
@@ -173,7 +208,6 @@ export default function CreateAccountScreen() {
             </View>
           </View>
 
-          {/* Password */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Password</Text>
             <View style={[styles.inputWrap, focused === 'password' && styles.inputWrapFocused]}>
@@ -197,7 +231,6 @@ export default function CreateAccountScreen() {
             )}
           </View>
 
-          {/* Confirm Password */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>Confirm Password</Text>
             <View style={[styles.inputWrap, focused === 'confirm' && styles.inputWrapFocused]}>
@@ -282,6 +315,15 @@ const styles = StyleSheet.create({
   scrollContent: { paddingTop: 16, paddingBottom: 24 },
   heading: { fontSize: 28, fontWeight: '800', color: '#1B1B1F', marginBottom: 6 },
   subtitle: { fontSize: 15, color: '#6E6E73', marginBottom: 24 },
+  calPreview: {
+    backgroundColor: '#EDE9FE', borderRadius: 16, padding: 16, marginBottom: 20,
+    alignItems: 'center', borderWidth: 1, borderColor: '#6A49FA20',
+  },
+  calPreviewLabel: { fontSize: 12, fontWeight: '700', color: '#6E6E73', textTransform: 'uppercase', letterSpacing: 0.5 },
+  calPreviewValue: { fontSize: 40, fontWeight: '800', color: '#6A49FA', marginTop: 4, fontVariant: ['tabular-nums'] },
+  calPreviewUnit: { fontSize: 13, color: '#6E6E73', fontWeight: '500' },
+  calPreviewMacros: { flexDirection: 'row', gap: 16, marginTop: 8 },
+  calPreviewMacro: { fontSize: 13, fontWeight: '700', color: '#6A49FA' },
   fieldGroup: { marginBottom: 18 },
   fieldLabel: {
     fontSize: 14, fontWeight: '600', color: '#1B1B1F',

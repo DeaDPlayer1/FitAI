@@ -1,17 +1,17 @@
-/**
- * NUTRITION SCREEN v5 — Premium AI Fueling Experience
- * Layout: NutritionHero → EnergyRing → MacroPerformance → AINutritionCard → MealTimeline → HydrationRecovery
- */
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
   Platform, RefreshControl, ActivityIndicator, StatusBar, TouchableOpacity,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+} from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '@/constants/theme';
 import { useNutritionStore, FoodLogEntry } from '@/store/nutritionStore';
 import { useUserStore } from '@/store/userStore';
@@ -19,6 +19,8 @@ import { syncUserData } from '@/lib/sync';
 import { supabase } from '@/lib/supabase';
 import { analyzeNutrition } from '@/lib/nutritionAnalyzer';
 import { useToast } from '@/components/ui/ToastNotification';
+import { useScaleOnPress } from '@/lib/premiumHooks';
+import { getYesterdayMeals, logMeal, getFrequentMeals, type SavedMeal } from '@/lib/foodSearch';
 
 import NutritionHero from '@/components/ui/NutritionHero';
 import EnergyRingCard from '@/components/ui/EnergyRingCard';
@@ -28,6 +30,8 @@ import MealTimeline from '@/components/ui/MealTimeline';
 import HydrationRecovery from '@/components/ui/HydrationRecovery';
 import SectionHeader from '@/components/ui/SectionHeader';
 import CalendarWidget from '@/components/ui/CalendarWidget';
+
+const C = theme.colors;
 
 export default function FoodScreen() {
   const router = useRouter();
@@ -46,9 +50,11 @@ export default function FoodScreen() {
   const [waterIntake, setWaterIntake] = useState(0);
   const { showToast } = useToast();
 
-  // ── Date picker ──
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [historyMeals, setHistoryMeals] = useState<any[] | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [yesterdayMeals, setYesterdayMeals] = useState<{ meal_type: string; foods: any[] }[]>([]);
+  const [repeating, setRepeating] = useState(false);
   const isToday = useMemo(() => {
     const d = new Date();
     return selectedDate.getDate() === d.getDate() &&
@@ -57,30 +63,34 @@ export default function FoodScreen() {
   }, [selectedDate]);
 
   const fetchDateMeals = useCallback(async (date: Date) => {
-    const { data: { user: u } } = await supabase.auth.getUser();
-    if (!u) return;
-    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
-    const { data } = await supabase
-      .from('meal_logs')
-      .select('*')
-      .eq('user_id', u.id)
-      .gte('logged_at', start.toISOString())
-      .lte('logged_at', end.toISOString())
-      .order('logged_at', { ascending: false });
-    setHistoryMeals(data || []);
-  }, []);
+    setLoadingHistory(true);
+    try {
+      const uid = user?.id;
+      if (!uid) return;
+      const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+      const { data } = await supabase
+        .from('meal_logs')
+        .select('*')
+        .eq('user_id', uid)
+        .gte('logged_at', start.toISOString())
+        .lte('logged_at', end.toISOString())
+        .order('logged_at', { ascending: false });
+      setHistoryMeals(data || []);
+    } finally { setLoadingHistory(false); }
+  }, [user?.id]);
 
-  const consumed = !isToday && historyMeals
+  const showHistoryData = !isToday && historyMeals && !loadingHistory;
+  const consumed = showHistoryData
     ? historyMeals.reduce((s, m) => s + (m.calories || 0), 0)
     : (getTotalCalories?.() || 0);
-  const protein = !isToday && historyMeals
+  const protein = showHistoryData
     ? historyMeals.reduce((s, m) => s + (m.protein_g || 0), 0)
     : (getTotalProtein?.() || 0);
-  const carbs = !isToday && historyMeals
+  const carbs = showHistoryData
     ? historyMeals.reduce((s, m) => s + (m.carbs_g || 0), 0)
     : (getTotalCarbs?.() || 0);
-  const fats = !isToday && historyMeals
+  const fats = showHistoryData
     ? historyMeals.reduce((s, m) => s + (m.fat_g || 0), 0)
     : (getTotalFats?.() || 0);
 
@@ -98,31 +108,21 @@ export default function FoodScreen() {
             name: m.food_name, calories: m.calories, protein_g: m.protein_g, carbs_g: m.carbs_g, fat_g: m.fat_g,
           }))
         : todayFoodLogs.map(l => ({
-            name: l.foodName,
-            calories: l.calories,
-            protein_g: l.protein_g,
-            carbs_g: l.carbs_g,
-            fat_g: l.fat_g,
+            name: l.foodName, calories: l.calories, protein_g: l.protein_g, carbs_g: l.carbs_g, fat_g: l.fat_g,
           }));
       const result = await analyzeNutrition({
         meals: mealsForAnalysis,
         totals: { calories: consumed, protein, carbs, fat: fats },
         goals: { calories: calorieGoal, protein: proteinGoal, carbs: carbsGoal, fat: fatsGoal, water: user?.goals?.water || 8 },
         userProfile: {
-          name: user?.name || 'User',
-          age: user?.health_profile?.age,
-          weight: user?.health_profile?.weight,
-          weightUnit: user?.health_profile?.weightUnit,
-          conditions: user?.health_profile?.conditions || [],
-          goal: user?.health_profile?.goal,
+          name: user?.name || 'User', age: user?.health_profile?.age,
+          weight: user?.health_profile?.weight, weightUnit: user?.health_profile?.weightUnit,
+          conditions: user?.health_profile?.conditions || [], goal: user?.health_profile?.goal,
         },
       });
       setAnalysisResult(result);
-    } catch (e: any) {
-      showToast(e.message || 'Analysis failed', 'error');
-    } finally {
-      setAnalyzing(false);
-    }
+    } catch (e: any) { showToast(e.message || 'Analysis failed', 'error');
+    } finally { setAnalyzing(false); }
   }, [analyzing, todayFoodLogs, consumed, protein, carbs, fats, calorieGoal, proteinGoal, carbsGoal, fatsGoal, user, isToday, historyMeals]);
 
   const handleRemoveFood = useCallback(async (logId: string) => {
@@ -130,19 +130,12 @@ export default function FoodScreen() {
     setRemovingId(logId);
     try {
       const { error } = await supabase.from('meal_logs').delete().eq('id', logId);
-      if (error) {
-        console.error('[food] DB delete failed:', error);
-        if (user?.id) await syncUserData(user.id);
-        return;
-      }
-      removeFoodLog(logId);
-    } catch (e) {
-      console.error('[food] delete exception:', e);
-      if (user?.id) await syncUserData(user.id);
-    } finally {
-      setRemovingId(null);
-    }
-  }, [removingId, removeFoodLog, user?.id]);
+      if (error) { if (user?.id) await syncUserData(user.id); return; }
+      if (isToday) removeFoodLog(logId);
+      else fetchDateMeals(selectedDate);
+    } catch { if (user?.id) await syncUserData(user.id);
+    } finally { setRemovingId(null); }
+  }, [removingId, removeFoodLog, user?.id, isToday, fetchDateMeals, selectedDate]);
 
   const fetchWater = useCallback(async (date: Date) => {
     try {
@@ -150,118 +143,48 @@ export default function FoodScreen() {
       if (!u) return;
       const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
       const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
-      const { data } = await supabase
-        .from('water_logs')
-        .select('glasses')
-        .eq('user_id', u.id)
-        .gte('logged_at', start.toISOString())
-        .lte('logged_at', end.toISOString());
+      const { data } = await supabase.from('water_logs').select('glasses').eq('user_id', u.id).gte('logged_at', start.toISOString()).lte('logged_at', end.toISOString());
       setWaterIntake(data?.reduce((s, r) => s + (r.glasses || 0), 0) ?? 0);
-    } catch (e: any) { console.error('fetchWater:', e.message); }
+    } catch {}
   }, []);
 
   useEffect(() => {
-    if (!isToday) {
-      fetchDateMeals(selectedDate);
-    } else {
-      setHistoryMeals(null);
-    }
+    if (!isToday) fetchDateMeals(selectedDate);
+    else setHistoryMeals(null);
     fetchWater(selectedDate);
-  }, [selectedDate, isToday, fetchDateMeals, fetchWater]);
+    if (isToday && user?.id) getYesterdayMeals(user.id).then(setYesterdayMeals).catch(() => {});
+  }, [selectedDate, isToday, fetchDateMeals, fetchWater, user?.id]);
 
-  const handleAddCustomMeal = () => {
-    router.push('/modals/add-meal-type');
-  };
-
-  useFocusEffect(
-    useCallback(() => {
-      if (user?.id) { syncUserData(user.id); fetchWater(selectedDate); }
-    }, [user?.id, fetchWater, selectedDate])
-  );
+  useFocusEffect(useCallback(() => {
+    if (user?.id) { syncUserData(user.id); fetchWater(selectedDate); getYesterdayMeals(user.id).then(setYesterdayMeals).catch(() => {}); }
+  }, [user?.id, fetchWater, selectedDate]));
 
   const onRefresh = async () => {
-    if (user?.id) {
-      setRefreshing(true);
-      await syncUserData(user.id);
-      await fetchWater(selectedDate);
-      setRefreshing(false);
-    }
+    if (user?.id) { setRefreshing(true); await syncUserData(user.id); await fetchWater(selectedDate); setRefreshing(false); }
   };
 
   const remaining = calorieGoal - consumed;
   const progress = calorieGoal > 0 ? Math.min(consumed / calorieGoal, 1) : 0;
-
   const todayLabel = selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
-  // Macro performance data
+  const pct = (val: number, goal: number) => goal > 0 ? Math.round(val / goal * 100) : 0;
   const macroData = useMemo(() => [
-    {
-      label: 'Protein',
-      value: protein,
-      target: proteinGoal,
-      color: theme.colors.success,
-      softColor: theme.colors.successSoft,
-      gradient: [theme.colors.successSoft, '#FFFFFF'] as [string, string],
-      icon: 'zap' as const,
-      insight: protein >= proteinGoal ? `Recovery supported (${Math.round(protein / proteinGoal * 100)}%)` : protein >= proteinGoal * 0.7 ? `${Math.round(protein / proteinGoal * 100)}% — adequate intake` : `${Math.round(protein / proteinGoal * 100)}% — recovery limited`,
-    },
-    {
-      label: 'Carbs',
-      value: carbs,
-      target: carbsGoal,
-      color: theme.colors.warning,
-      softColor: theme.colors.warningSoft,
-      gradient: [theme.colors.warningSoft, '#FFFFFF'] as [string, string],
-      icon: 'activity' as const,
-      insight: carbs >= carbsGoal ? `Fuel optimized (${Math.round(carbs / carbsGoal * 100)}%)` : carbs >= carbsGoal * 0.7 ? `${Math.round(carbs / carbsGoal * 100)}% — moderate energy` : `${Math.round(carbs / carbsGoal * 100)}% — low energy`,
-    },
-    {
-      label: 'Fat',
-      value: fats,
-      target: fatsGoal,
-      color: theme.colors.primary,
-      softColor: theme.colors.primarySoft,
-      gradient: [theme.colors.primarySoft, '#FFFFFF'] as [string, string],
-      icon: 'heart' as const,
-      insight: fats >= fatsGoal ? `Hormonal support balanced (${Math.round(fats / fatsGoal * 100)}%)` : fats >= fatsGoal * 0.7 ? `${Math.round(fats / fatsGoal * 100)}% — adequate intake` : `${Math.round(fats / fatsGoal * 100)}% — increase healthy fats`,
-    },
+    { label: 'Protein', value: protein, target: proteinGoal, color: C.protein, softColor: C.proteinSoft, gradient: [C.proteinSoft, '#FFFFFF'] as [string, string], icon: 'zap' as const, insight: protein >= proteinGoal ? `Recovery supported (${pct(protein, proteinGoal)}%)` : protein >= proteinGoal * 0.7 ? `${pct(protein, proteinGoal)}% — adequate intake` : `${pct(protein, proteinGoal)}% — recovery limited` },
+    { label: 'Carbs', value: carbs, target: carbsGoal, color: C.carbs, softColor: C.carbsSoft, gradient: [C.carbsSoft, '#FFFFFF'] as [string, string], icon: 'activity' as const, insight: carbs >= carbsGoal ? `Fuel optimized (${pct(carbs, carbsGoal)}%)` : carbs >= carbsGoal * 0.7 ? `${pct(carbs, carbsGoal)}% — moderate energy` : `${pct(carbs, carbsGoal)}% — low energy` },
+    { label: 'Fat', value: fats, target: fatsGoal, color: C.fat, softColor: C.fatSoft, gradient: [C.fatSoft, '#FFFFFF'] as [string, string], icon: 'heart' as const, insight: fats >= fatsGoal ? `Hormonal support balanced (${pct(fats, fatsGoal)}%)` : fats >= fatsGoal * 0.7 ? `${pct(fats, fatsGoal)}% — adequate intake` : `${pct(fats, fatsGoal)}% — increase healthy fats` },
   ], [protein, proteinGoal, carbs, carbsGoal, fats, fatsGoal]);
 
-  // Meal timeline data
   const sourceMeals: FoodLogEntry[] = !isToday && historyMeals
-    ? historyMeals.map((m: any) => ({
-        id: m.id,
-        mealType: m.meal_type?.toLowerCase() || 'snack',
-        foodName: m.food_name || '',
-        calories: m.calories || 0,
-        protein_g: m.protein_g || 0,
-        carbs_g: m.carbs_g || 0,
-        fat_g: m.fat_g || 0,
-        loggedAt: m.logged_at || '',
-      }))
+    ? historyMeals.map((m: any) => ({ id: m.id, mealType: m.meal_type?.toLowerCase() || 'snack', foodName: m.food_name || '', calories: m.calories || 0, protein_g: m.protein_g || 0, carbs_g: m.carbs_g || 0, fat_g: m.fat_g || 0, loggedAt: m.logged_at || '' }))
     : todayFoodLogs;
 
   const mealCards = useMemo(() => mealTypes.map((meal) => ({
-    id: meal.id,
-    name: meal.name,
-    icon: meal.icon as React.ComponentProps<typeof Feather>['name'],
-    iconColor: meal.iconColor,
-    pastel: meal.pastel,
-    items: sourceMeals.filter(l => l.mealType?.toLowerCase() === meal.id.toLowerCase()).map(l => ({
-      id: l.id,
-      foodName: l.foodName,
-      calories: l.calories || 0,
-      protein_g: l.protein_g || 0,
-      carbs_g: l.carbs_g || 0,
-      fat_g: l.fat_g || 0,
-      servingScale: (l as any).servingScale,
-    })),
+    id: meal.id, name: meal.name, icon: meal.icon as any, iconColor: meal.iconColor, pastel: meal.pastel,
+    items: sourceMeals.filter(l => l.mealType?.toLowerCase() === meal.id.toLowerCase()).map(l => ({ id: l.id, foodName: l.foodName, calories: l.calories || 0, protein_g: l.protein_g || 0, carbs_g: l.carbs_g || 0, fat_g: l.fat_g || 0, servingScale: (l as any).servingScale })),
     onAddFood: () => router.push({ pathname: '/modals/log-food', params: { mealType: meal.id } }),
-    onRemoveFood: handleRemoveFood,
-    removingId,
+    onRemoveFood: handleRemoveFood, removingId,
   })), [mealTypes, sourceMeals, isToday, removingId, router, handleRemoveFood]);
 
-  // AI message for hero
   const aiMessage = useMemo(() => {
     if (!isToday) {
       const totalCals = consumed;
@@ -277,155 +200,196 @@ export default function FoodScreen() {
     return 'Your nutrition is on track. Keep it up!';
   }, [protein, proteinGoal, consumed, calorieGoal, remaining, isToday, selectedDate]);
 
+  const { animatedStyle: searchAnim, onPressIn: searchIn, onPressOut: searchOut } = useScaleOnPress();
+
   return (
-    <View style={s.safe}>
+    <SafeAreaView style={s.safe}>
       <StatusBar barStyle="light-content" />
+      <LinearGradient colors={[C.bg.primary, C.surfaceTint, C.bg.primary]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={Platform.OS === 'android'}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
       >
-        {/* SECTION 1 — IMMERSIVE HEADER */}
-        <NutritionHero
-          dateLabel={todayLabel}
-          aiMessage={aiMessage}
-        />
+        {/* SECTION 1 — HERO */}
+        <NutritionHero dateLabel={todayLabel} aiMessage={aiMessage} />
 
         {/* SECTION 1B — DATE PICKER */}
         <View style={s.calendarWrap}>
-          <CalendarWidget
-            selectedDate={selectedDate}
-            onDayPress={(date) => setSelectedDate(date)}
-            completedDates={new Set()}
-          />
+          <CalendarWidget selectedDate={selectedDate} onDayPress={(date) => setSelectedDate(date)} completedDates={new Set()} />
           {!isToday && (
-            <TouchableOpacity
-              onPress={() => setSelectedDate(new Date())}
-              style={s.todayBtn}
-            >
-              <Feather name="calendar" size={14} color={theme.colors.primary} />
+            <TouchableOpacity onPress={() => setSelectedDate(new Date())} style={s.todayBtn}>
+              <Feather name="calendar" size={14} color={C.primary} />
               <Text style={s.todayBtnText}>Back to Today</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        {/* SECTION 1C — QUICK SEARCH SHORTCUT */}
-        <TouchableOpacity
-          onPress={() => router.push({ pathname: '/modals/food-search', params: { returnTo: 'food' } })}
-          style={{
-            flexDirection: 'row', alignItems: 'center', gap: 10,
-            backgroundColor: theme.colors.surface, borderRadius: 16,
-            padding: 16, marginHorizontal: 16, marginTop: 12,
-            borderWidth: 1, borderColor: theme.colors.border.soft,
-            ...theme.shadow.card,
-          }}
-          activeOpacity={0.7}
-        >
-          <View style={{
-            width: 40, height: 40, borderRadius: 14,
-            backgroundColor: theme.colors.primarySoft,
-            alignItems: 'center', justifyContent: 'center',
-          }}>
-            <Feather name="search" size={20} color={theme.colors.primary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.text.primary }}>
-              Search Food Database
-            </Text>
-            <Text style={{ fontSize: 12, fontWeight: '500', color: theme.colors.text.muted }}>
-              1000+ foods · Manual log · Recent · Barcode
-            </Text>
-          </View>
-          <Feather name="chevron-right" size={18} color={theme.colors.text.muted} />
-        </TouchableOpacity>
+        {/* SECTION 1C — PREMIUM SEARCH SHORTCUT */}
+        <Animated.View entering={FadeInDown.delay(100).duration(250)}>
+          <Animated.View style={searchAnim}>
+            <TouchableOpacity
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push({ pathname: '/modals/food-search', params: { returnTo: 'food' } }); }}
+              onPressIn={searchIn} onPressOut={searchOut}
+              activeOpacity={0.9}
+              style={s.searchCard}
+            >
+              <LinearGradient colors={['#6C3BFF', '#8B5CF6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.searchIcon}>
+                <Feather name="search" size={20} color="#FFF" />
+              </LinearGradient>
+              <View style={{ flex: 1 }}>
+                <Text style={s.searchTitle}>Search Food</Text>
+                <Text style={s.searchSub}>1000+ foods · Recent · Barcode · Quick Add</Text>
+              </View>
+              <Feather name="chevron-right" size={18} color="#9CA3AF" />
+            </TouchableOpacity>
+          </Animated.View>
+        </Animated.View>
 
-        {/* SECTION 2 — DAILY ENERGY OVERVIEW */}
-        <Animated.View entering={FadeInDown.delay(100).springify()}>
+        {/* SECTION 1D — QUICK REPEAT YESTERDAY */}
+        {isToday && yesterdayMeals.length > 0 && (
+          <Animated.View entering={FadeInDown.delay(130).duration(250)} style={{ marginHorizontal: 16, marginTop: 16 }}>
+            <View style={s.repeatCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <Feather name="rotate-ccw" size={16} color="#6C3BFF" />
+                <Text style={s.repeatTitle}>Repeat Yesterday</Text>
+              </View>
+              {yesterdayMeals.map((ym) => (
+                <View key={ym.meal_type} style={s.repeatMealRow}>
+                  <Text style={s.repeatMealType}>{ym.meal_type.replace('_', ' ')}</Text>
+                  <Text style={s.repeatFoods}>{ym.foods.map((f: any) => f.food_name).join(', ')}</Text>
+                </View>
+              ))}
+              <TouchableOpacity
+                disabled={repeating}
+                onPress={async () => {
+                  if (!user?.id) return;
+                  setRepeating(true);
+                  try {
+                    for (const ym of yesterdayMeals) {
+                      for (const f of ym.foods) {
+                        await supabase.from('meal_logs').insert({
+                          user_id: user.id, food_name: f.food_name,
+                          calories: f.calories, protein_g: f.protein, carbs_g: f.carbs, fat_g: f.fat,
+                          meal_type: ym.meal_type, logged_at: new Date().toISOString(),
+                        });
+                      }
+                    }
+                    await syncUserData(user.id);
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    showToast("Yesterday's meals logged!", 'success');
+                  } catch { showToast('Could not repeat meals', 'error'); }
+                  finally { setRepeating(false); }
+                }}
+                style={s.repeatBtn}
+              >
+                <Feather name="rotate-ccw" size={14} color="#FFF" />
+                <Text style={s.repeatBtnText}>{repeating ? 'Logging...' : 'Repeat All'}</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        )}
+
+        {/* SECTION 2 — DAILY ENERGY */}
+        <Animated.View entering={FadeInDown.delay(150).duration(250)} style={{ marginTop: 28 }}>
           <EnergyRingCard
-            consumed={consumed}
-            remaining={remaining}
-            progress={progress}
+            consumed={consumed} remaining={remaining} progress={progress}
             stats={[
-              { icon: 'coffee', label: 'Eaten', value: `${consumed} kcal`, color: theme.colors.primary },
+              { icon: 'coffee', label: 'Eaten', value: `${consumed} kcal`, color: '#6C3BFF' },
               { icon: 'droplet', label: 'Water', value: `${waterIntake} glasses`, color: '#60A5FA' },
-              { icon: 'zap', label: 'Protein', value: `${Math.round(protein)}g`, color: theme.colors.success },
+              { icon: 'zap', label: 'Protein', value: `${Math.round(protein)}g`, color: '#FB7185' },
             ]}
           />
         </Animated.View>
 
         {/* SECTION 3 — MACRO PERFORMANCE */}
-        <View style={{ marginTop: 24, marginBottom: 14 }}>
+        <View style={{ marginTop: 32, marginBottom: 16, paddingHorizontal: 16 }}>
           <SectionHeader title="Macro Performance" />
         </View>
-        <MacroPerformance macros={macroData} />
+        <View style={{ paddingHorizontal: 16 }}>
+          <MacroPerformance macros={macroData} />
+        </View>
 
-        {/* SECTION 4 — AI NUTRITION INSIGHT */}
-        <View style={{ marginTop: 24, marginBottom: 14 }}>
-          <SectionHeader
-            title="AI Coach"
-            icon="cpu"
-            iconColor={theme.colors.primary}
-          />
+        {/* SECTION 4 — AI COACH */}
+        <View style={{ marginTop: 28, marginBottom: 14, paddingHorizontal: 16 }}>
+          <SectionHeader title="AI Coach" icon="cpu" iconColor={C.primary} />
         </View>
         <AINutritionCard
-          analyzing={analyzing}
-          analysisResult={analysisResult}
-          onAnalyze={handleAnalyzeNutrition}
-          onDismiss={() => setAnalysisResult(null)}
+          analyzing={analyzing} analysisResult={analysisResult}
+          onAnalyze={handleAnalyzeNutrition} onDismiss={() => setAnalysisResult(null)}
           onGenerateMeal={() => router.push({ pathname: '/modals/log-food' })}
-          onFixMacros={() => {}}
-          onHighProtein={() => {}}
+          onFixMacros={() => {}} onHighProtein={() => {}}
         />
 
         {/* SECTION 5 — DAILY MEALS */}
-        <View style={{ marginTop: 28, marginBottom: 14 }}>
-          <SectionHeader
-            title="Daily Meals"
-            action={{ label: 'Add custom', onPress: handleAddCustomMeal }}
-          />
+        <View style={{ marginTop: 28, marginBottom: 14, paddingHorizontal: 16 }}>
+          <SectionHeader title="Daily Meals" action={{ label: 'Add custom', onPress: () => router.push('/modals/add-meal-type') }} />
         </View>
         <MealTimeline meals={mealCards} />
 
-        {/* SECTION 6 — HYDRATION + RECOVERY */}
-        <View style={{ marginTop: 28, marginBottom: 14 }}>
+        {/* SECTION 6 — HYDRATION */}
+        <View style={{ marginTop: 28, marginBottom: 14, paddingHorizontal: 16 }}>
           <SectionHeader title="Hydration" />
         </View>
         <HydrationRecovery
-          current={waterIntake}
-          goal={user?.goals?.water || 8}
+          current={waterIntake} goal={user?.goals?.water || 8}
           onAdd={isToday ? async () => {
             setWaterIntake((p) => p + 1);
-            const Haptics = await import('expo-haptics');
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             try {
               const { data: { user: u } } = await supabase.auth.getUser();
               if (u) await supabase.from('water_logs').insert({ user_id: u.id, glasses: 1, logged_at: new Date().toISOString() });
-            } catch (e) { /* silent */ }
+            } catch {}
           } : () => {}}
         />
 
         <View style={{ height: 100 }} />
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: theme.colors.bg.primary },
+  safe: { flex: 1, backgroundColor: C.bg.primary },
   scroll: { flex: 1 },
   scrollContent: { paddingTop: 0, paddingBottom: 100 },
-  calendarWrap: {
-    marginTop: -28,
-    marginBottom: 48,
-    paddingHorizontal: 0,
-  },
+  calendarWrap: { marginTop: -28, marginBottom: 48 },
   todayBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10,
+  },
+  todayBtnText: { fontSize: 13, fontWeight: '700', color: C.primary },
+
+  searchCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    marginHorizontal: 16, marginTop: 8,
+    backgroundColor: '#FFFFFF', borderRadius: 20,
+    padding: 20,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+  },
+  searchIcon: {
+    width: 44, height: 44, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+  },
+  searchTitle: {
+    fontSize: 15, fontWeight: '700', color: '#1F2937',
+  },
+  searchSub: {
+    fontSize: 11, fontWeight: '500', color: '#9CA3AF', marginTop: 2,
+  },
+  repeatCard: {
+    backgroundColor: '#FFFFFF', borderRadius: 20, padding: 18,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
+  },
+  repeatTitle: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
+  repeatMealRow: { marginBottom: 6 },
+  repeatMealType: { fontSize: 11, fontWeight: '700', color: '#6C3BFF', textTransform: 'uppercase', letterSpacing: 0.3 },
+  repeatFoods: { fontSize: 12, fontWeight: '500', color: '#6B7280', marginTop: 1 },
+  repeatBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 10,
+    backgroundColor: '#6C3BFF', borderRadius: 12, paddingVertical: 10, marginTop: 10,
   },
-  todayBtnText: {
-    fontSize: 13, fontWeight: '700', color: theme.colors.primary,
-  },
+  repeatBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
 });

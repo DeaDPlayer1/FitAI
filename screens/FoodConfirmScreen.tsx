@@ -11,9 +11,10 @@ import { supabase } from '@/lib/supabase';
 import { syncUserData } from '@/lib/sync';
 import { getDb } from '@/lib/db';
 import {
-  analyzeFood, verifyAndCrossCheck, canonicalizeFoodName,
+  analyzeFood, verifyAndCrossCheck,
   type FoodAnalysisItem, type FoodDataSource,
 } from '@/lib/nutritionAI';
+import { canonicalizeFoodName } from '@/lib/foodCanonicalMap';
 
 export interface FoodConfirmParams {
   imageUri?: string;
@@ -32,6 +33,14 @@ interface ItemState {
   fat100: number;
   fiber100: number;
   confidence?: number;
+  chain?: string;
+  servingLabel?: string;
+  isRestaurant?: boolean;
+  totalCalories?: number;
+  totalProtein?: number;
+  totalCarbs?: number;
+  totalFat?: number;
+  totalFiber?: number;
 }
 
 interface RecentFood {
@@ -76,6 +85,16 @@ const C = {
 };
 
 function scaleItem(item: ItemState) {
+  if (item.isRestaurant && item.totalCalories != null) {
+    const qty = Math.max(1, Math.round(item.grams));
+    return {
+      cal: Math.round(item.totalCalories * qty),
+      prot: round1((item.totalProtein || 0) * qty),
+      carb: round1((item.totalCarbs || 0) * qty),
+      fat: round1((item.totalFat || 0) * qty),
+      fiber: round1((item.totalFiber || 0) * qty),
+    };
+  }
   const r = item.grams / 100;
   return {
     cal: Math.round(item.cal100 * r),
@@ -235,13 +254,21 @@ export default function FoodConfirmScreen({ params, onClose }: {
       }
       setItemStates(verifiedItems.map(i => ({
         name: i.name,
-        grams: i.grams,
+        grams: i.isRestaurant ? 1 : i.grams,
         cal100: i.calories_per_100g,
         prot100: i.protein_per_100g,
         carb100: i.carbs_per_100g,
         fat100: i.fat_per_100g,
         fiber100: i.fiber_per_100g,
         confidence: i.confidence,
+        chain: i.chain,
+        servingLabel: i.servingLabel,
+        isRestaurant: i.isRestaurant,
+        totalCalories: i.totalCalories,
+        totalProtein: i.totalProtein,
+        totalCarbs: i.totalCarbs,
+        totalFat: i.totalFat,
+        totalFiber: i.totalFiber,
       })));
       setInitialized(true);
     })();
@@ -378,17 +405,37 @@ export default function FoodConfirmScreen({ params, onClose }: {
       const result = await analyzeFood({ text, userId: user?.id || '' });
       if (result.items.length > 0) {
         const item = result.items[0];
-        const grams = parseInt(item.quantity) || 100;
-        const r = 100 / grams;
-        setItemStates(prev => [...prev, {
-          name: canonicalizeFoodName(item.name),
-          grams,
-          cal100: Math.round(item.calories * r),
-          prot100: Math.round(item.protein * r * 10) / 10,
-          carb100: Math.round(item.carbs * r * 10) / 10,
-          fat100: Math.round(item.fat * r * 10) / 10,
-          fiber100: Math.round(item.fiber * r * 10) / 10,
-        }]);
+        if (item.isRestaurant) {
+          setItemStates(prev => [...prev, {
+            name: item.name,
+            grams: 1,
+            cal100: Math.round(item.calories * 100),
+            prot100: Math.round(item.protein * 100 * 10) / 10,
+            carb100: Math.round(item.carbs * 100 * 10) / 10,
+            fat100: Math.round(item.fat * 100 * 10) / 10,
+            fiber100: Math.round(item.fiber * 100 * 10) / 10,
+            chain: item.chain,
+            servingLabel: item.servingLabel,
+            isRestaurant: true,
+            totalCalories: item.totalCalories,
+            totalProtein: item.totalProtein,
+            totalCarbs: item.totalCarbs,
+            totalFat: item.totalFat,
+            totalFiber: item.totalFiber,
+          }]);
+        } else {
+          const grams = parseInt(item.quantity) || 100;
+          const r = 100 / grams;
+          setItemStates(prev => [...prev, {
+            name: canonicalizeFoodName(item.name),
+            grams,
+            cal100: Math.round(item.calories * r),
+            prot100: Math.round(item.protein * r * 10) / 10,
+            carb100: Math.round(item.carbs * r * 10) / 10,
+            fat100: Math.round(item.fat * r * 10) / 10,
+            fiber100: Math.round(item.fiber * r * 10) / 10,
+          }]);
+        }
       }
       setShowAddSearch(false);
       setShowRecent(false);
@@ -549,7 +596,7 @@ export default function FoodConfirmScreen({ params, onClose }: {
           }}>
             <Feather name="alert-triangle" size={16} color="#D97706" />
             <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: '#92400E' }}>
-              Some items need review — please verify the details below.
+              Some items may be inaccurate — please check and edit the values below.
             </Text>
           </Animated.View>
         )}
@@ -635,14 +682,24 @@ export default function FoodConfirmScreen({ params, onClose }: {
               }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <TextInput
-                    style={{ flex: 1, fontSize: 16, fontWeight: '700', color: C.text, paddingVertical: 0, borderBottomWidth: 1, borderBottomColor: 'transparent' }}
+                    style={{ flex: 1, fontSize: 16, fontWeight: '700', color: C.text, paddingVertical: 0, borderBottomWidth: 1, borderBottomColor: 'transparent', minWidth: 120 }}
                     value={item.name}
                     onChangeText={(t) => updateName(idx, t)}
                     placeholder="Food name"
                     placeholderTextColor={C.muted}
                   />
+                  {item.isRestaurant && (
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 4,
+                      backgroundColor: '#16A34A18', borderRadius: 6,
+                      paddingHorizontal: 8, paddingVertical: 3,
+                    }}>
+                      <Text style={{ fontSize: 11 }}>🍔</Text>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#16A34A' }}>Restaurant Item</Text>
+                    </View>
+                  )}
                   <ConfidenceBadge confidence={item.confidence} />
                 </View>
                 <TouchableOpacity onPress={() => removeItem(idx)} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}>
@@ -650,48 +707,122 @@ export default function FoodConfirmScreen({ params, onClose }: {
                 </TouchableOpacity>
               </View>
 
+              {item.chain && (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 6,
+                  marginBottom: 8,
+                }}>
+                  <View style={{
+                    backgroundColor: C.primary + '12', borderRadius: 6,
+                    paddingHorizontal: 8, paddingVertical: 3,
+                  }}>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: C.primary }}>🏪 {item.chain}</Text>
+                  </View>
+                  {item.servingLabel && (
+                    <Text style={{ fontSize: 11, fontWeight: '500', color: C.muted }}>per {item.servingLabel}</Text>
+                  )}
+                </View>
+              )}
+
               <View style={{ height: 1, backgroundColor: C.border, marginBottom: 12 }} />
 
-              <Text style={{ fontSize: 11, fontWeight: '600', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>How much?</Text>
-
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <TextInput
-                  style={{
-                    fontSize: 32, fontWeight: '800', color: C.text,
-                    backgroundColor: C.inputBg, borderRadius: 12, paddingHorizontal: 16,
-                    paddingVertical: 8, minWidth: 80, textAlign: 'center',
-                    borderWidth: 1.5, borderColor: item.grams > 0 ? C.primary : C.inputBorder,
-                  }}
-                  value={String(Math.round(item.grams))}
-                  onChangeText={(t) => {
-                    const v = parseInt(t.replace(/[^0-9]/g, ''), 10) || 0;
-                    updateGrams(idx, v);
-                  }}
-                  keyboardType="number-pad"
-                  returnKeyType="done"
-                  selectTextOnFocus
-                />
-                <Text style={{ fontSize: 16, fontWeight: '600', color: C.muted }}>g</Text>
-              </View>
-
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-                {[50, 100, 200].map((g) => (
-                  <TouchableOpacity
-                    key={g}
-                    style={{
-                      paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
-                      backgroundColor: item.grams === g ? C.primary : C.inputBg,
-                      borderWidth: 1, borderColor: item.grams === g ? C.primary : C.inputBorder,
-                    }}
-                    onPress={() => updateGrams(idx, g)}
-                  >
-                    <Text style={{
-                      fontSize: 13, fontWeight: '700',
-                      color: item.grams === g ? '#FFFFFF' : C.primary,
-                    }}>{g}g</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              {item.isRestaurant ? (
+                <>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                    How many {item.servingLabel || 'servings'}?
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                    <TouchableOpacity
+                      style={{
+                        width: 44, height: 44, borderRadius: 12,
+                        backgroundColor: C.inputBg, alignItems: 'center', justifyContent: 'center',
+                        borderWidth: 1.5, borderColor: C.inputBorder,
+                      }}
+                      onPress={() => updateGrams(idx, Math.max(0.5, item.grams - 0.5))}
+                    >
+                      <Feather name="minus" size={20} color={C.primary} />
+                    </TouchableOpacity>
+                    <View style={{
+                      flex: 1, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: C.inputBg, borderRadius: 12, paddingVertical: 8,
+                      borderWidth: 1.5, borderColor: C.primary,
+                    }}>
+                      <Text style={{ fontSize: 28, fontWeight: '800', color: C.text }}>
+                        {Math.round(item.grams)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{
+                        width: 44, height: 44, borderRadius: 12,
+                        backgroundColor: C.inputBg, alignItems: 'center', justifyContent: 'center',
+                        borderWidth: 1.5, borderColor: C.inputBorder,
+                      }}
+                      onPress={() => updateGrams(idx, Math.min(50, item.grams + 0.5))}
+                    >
+                      <Feather name="plus" size={20} color={C.primary} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    {[1, 2, 3, 4].map((qty) => (
+                      <TouchableOpacity
+                        key={qty}
+                        style={{
+                          paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10,
+                          backgroundColor: Math.round(item.grams) === qty ? C.primary : C.inputBg,
+                          borderWidth: 1, borderColor: Math.round(item.grams) === qty ? C.primary : C.inputBorder,
+                        }}
+                        onPress={() => updateGrams(idx, qty)}
+                      >
+                        <Text style={{
+                          fontSize: 13, fontWeight: '700',
+                          color: Math.round(item.grams) === qty ? '#FFFFFF' : C.primary,
+                        }}>{qty}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>How much?</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <TextInput
+                      style={{
+                        fontSize: 32, fontWeight: '800', color: C.text,
+                        backgroundColor: C.inputBg, borderRadius: 12, paddingHorizontal: 16,
+                        paddingVertical: 8, minWidth: 80, textAlign: 'center',
+                        borderWidth: 1.5, borderColor: item.grams > 0 ? C.primary : C.inputBorder,
+                      }}
+                      value={String(Math.round(item.grams))}
+                      onChangeText={(t) => {
+                        const v = parseInt(t.replace(/[^0-9]/g, ''), 10) || 0;
+                        updateGrams(idx, v);
+                      }}
+                      keyboardType="number-pad"
+                      returnKeyType="done"
+                      selectTextOnFocus
+                    />
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: C.muted }}>g</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    {[50, 100, 200].map((g) => (
+                      <TouchableOpacity
+                        key={g}
+                        style={{
+                          paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+                          backgroundColor: item.grams === g ? C.primary : C.inputBg,
+                          borderWidth: 1, borderColor: item.grams === g ? C.primary : C.inputBorder,
+                        }}
+                        onPress={() => updateGrams(idx, g)}
+                      >
+                        <Text style={{
+                          fontSize: 13, fontWeight: '700',
+                          color: item.grams === g ? '#FFFFFF' : C.primary,
+                        }}>{g}g</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
 
               <View style={{
                 flexDirection: 'row', alignItems: 'center', gap: 10,

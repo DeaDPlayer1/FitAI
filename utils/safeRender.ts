@@ -31,3 +31,12 @@ export function safeJSON(val: unknown): any[] {
   }
   return [];
 }
+
+export function safeJsonParse<T>(val: string | null | undefined, fallback: T): T {
+  if (!val) return fallback;
+  try {
+    return JSON.parse(val) as T;
+  } catch {
+    return fallback;
+  }
+}

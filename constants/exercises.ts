@@ -3,7 +3,7 @@ export interface Exercise {
   name: string;
   muscle: string;
   equipment: string;
-  type: 'Compound' | 'Isolation';
+  type: 'Compound' | 'Isolation' | 'Cardio';
   synonyms?: string[];
 }
 

@@ -35,6 +35,7 @@ export default function ProfileScreen() {
 
   const [healthAware, setHealthAware] = React.useState(false);
   const [selectedConditions, setSelectedConditions] = React.useState<string[]>([]);
+  const [refreshing, setRefreshing] = React.useState(false);
 
   const refreshUserProfile = useCallback(async () => {
     if (!user?.id) return;
@@ -66,7 +67,9 @@ export default function ProfileScreen() {
   }, [user?.health_profile?.conditions]);
 
   const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     if (user?.id) await fetchAll(user.id);
+    setRefreshing(false);
   }, [user?.id, fetchAll]);
 
   const currentStreak = useMemo(() => {
@@ -196,7 +199,7 @@ export default function ProfileScreen() {
       <StatusBar barStyle={user?.dark_mode ? 'light-content' : 'dark-content'} />
       <ScrollView
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={false} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
         contentContainerStyle={{ paddingBottom: 100 }}
       >
         <ProfileHero

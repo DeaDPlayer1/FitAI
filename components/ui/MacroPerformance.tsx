@@ -1,172 +1,128 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { View, Text, StyleSheet } from 'react-native';
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withDelay,
-  Easing,
+  useSharedValue, useAnimatedProps, withTiming, withDelay, Easing, FadeIn,
 } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle } from 'react-native-svg';
 import { theme } from '@/constants/theme';
 
-interface MacroPerformanceProps {
-  macros: {
-    label: string;
-    value: number;
-    target: number;
-    color: string;
-    softColor: string;
-    gradient: [string, string];
-    icon: React.ComponentProps<typeof Feather>['name'];
-    insight: string;
-  }[];
+interface Macro {
+  label: string;
+  value: number;
+  target: number;
+  color: string;
+  softColor: string;
+  gradient: [string, string];
+  icon: any;
+  insight: string;
 }
 
-function MacroCard({
-  macro,
-  index,
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+function MacroRing({
+  macro, index, size = 96, strokeWidth = 8,
 }: {
-  macro: MacroPerformanceProps['macros'][0];
-  index: number;
+  macro: Macro; index: number; size?: number; strokeWidth?: number;
 }) {
-  const progress = macro.target > 0 ? Math.min(macro.value / macro.target, 1) : 0;
-  const fillWidth = useSharedValue(0);
+  const progress = useSharedValue(0);
+  const r = (size - strokeWidth) / 2;
+  const circ = 2 * Math.PI * r;
+  const pct = macro.target > 0 ? Math.min(macro.value / macro.target, 1) : 0;
 
   useEffect(() => {
-    fillWidth.value = withDelay(200 + index * 150, withTiming(progress, { duration: 900, easing: Easing.out(Easing.quad) }));
-  }, [progress, index, fillWidth]);
+    progress.value = withDelay(200 + index * 150, withTiming(pct, { duration: 1000, easing: Easing.out(Easing.cubic) }));
+  }, [pct, index]);
 
-  const barAnim = useAnimatedStyle(() => ({
-    width: `${fillWidth.value * 100}%`,
+  const animatedProps = useAnimatedProps(() => ({
+    strokeDashoffset: circ * (1 - progress.value),
   }));
 
-  const isComplete = macro.value >= macro.target;
-
   return (
-    <LinearGradient
-      colors={macro.gradient}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.card}
-    >
-      <View style={styles.cardTop}>
-        <View style={[styles.iconWrap, { backgroundColor: macro.color + '20' }]}>
-          <Feather name={macro.icon} size={16} color={macro.color} />
+    <View style={styles.ringWrapper}>
+      <View style={{ width: size, height: size }}>
+        <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+          <Circle cx={size / 2} cy={size / 2} r={r} stroke={macro.color + '18'} strokeWidth={strokeWidth} fill="none" />
+          <AnimatedCircle
+            cx={size / 2} cy={size / 2} r={r}
+            stroke={macro.color} strokeWidth={strokeWidth} fill="none"
+            strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={circ}
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+            animatedProps={animatedProps}
+          />
+        </Svg>
+        <View style={styles.ringCenter}>
+          <Text style={[styles.ringValue, { color: macro.color }]}>{Math.round(macro.value)}</Text>
         </View>
-        {isComplete && (
-          <View style={[styles.goalBadge, { backgroundColor: macro.color + '20' }]}>
-            <Feather name="check" size={10} color={macro.color} />
-            <Text style={[styles.goalBadgeText, { color: macro.color }]}>Goal</Text>
-          </View>
-        )}
       </View>
-
-      <Text style={styles.label}>{macro.label}</Text>
-
-      <View style={styles.valueRow}>
-        <Text style={[styles.value, { color: macro.color }]}>{Math.round(macro.value)}</Text>
-        <Text style={styles.target}> / {macro.target}g</Text>
-      </View>
-
-      <View style={[styles.track, { backgroundColor: macro.color + '15' }]}>
-        <Animated.View style={[styles.fill, { backgroundColor: macro.color }, barAnim]} />
-      </View>
-
-      <Text style={styles.insight}>{macro.insight}</Text>
-    </LinearGradient>
+      <Text style={styles.ringLabel}>{macro.label}</Text>
+      <Text style={styles.ringTarget}>{macro.target}g goal</Text>
+      <Text style={styles.ringInsight}>{macro.insight}</Text>
+    </View>
   );
 }
 
-export function MacroPerformance({ macros }: MacroPerformanceProps) {
+export function MacroPerformance({ macros }: { macros: Macro[] }) {
   if (macros.length === 0) return null;
-
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.scroll}
-    >
-      {macros.map((m, i) => (
-        <MacroCard key={m.label} macro={m} index={i} />
-      ))}
-    </ScrollView>
+    <Animated.View entering={FadeIn.duration(300)} style={styles.card}>
+      <Text style={styles.cardTitle}>Today's Macros</Text>
+      <View style={styles.row}>
+        {macros.map((m, i) => (
+          <MacroRing key={m.label} macro={m} index={i} />
+        ))}
+      </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: {
-    paddingHorizontal: 20,
-    gap: 10,
-  },
   card: {
-    width: 160,
-    borderRadius: theme.radius.xl,
-    padding: 16,
-    gap: 8,
-    ...theme.shadow.card,
+    backgroundColor: '#FFFFFF', borderRadius: 22, marginBottom: 18,
+    padding: 22, paddingBottom: 16,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
   },
-  cardTop: {
+  cardTitle: {
+    fontSize: 12, fontWeight: '700', color: theme.colors.text.muted,
+    textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8,
+  },
+  row: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    justifyContent: 'space-evenly',
   },
-  iconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+  ringWrapper: {
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    flex: 1,
   },
-  goalBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: theme.radius.pill,
+  ringCenter: {
+    position: 'absolute', inset: 0,
+    alignItems: 'center', justifyContent: 'center',
   },
-  goalBadgeText: {
-    fontSize: 9,
+  ringValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  ringLabel: {
+    fontSize: 12,
     fontWeight: '700',
-  },
-  label: {
-    fontSize: theme.font.size.caption,
-    fontWeight: '600',
     color: theme.colors.text.secondary,
     textTransform: 'uppercase',
     letterSpacing: 0.3,
   },
-  valueRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-  },
-  value: {
-    fontSize: 28,
-    fontWeight: '800',
-    fontFamily: theme.font.family.heading,
-    fontVariant: ['tabular-nums'],
-  },
-  target: {
-    fontSize: theme.font.size.caption,
+  ringTarget: {
+    fontSize: 9,
     fontWeight: '500',
     color: theme.colors.text.muted,
   },
-  track: {
-    height: 6,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  fill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  insight: {
-    fontSize: theme.font.size.micro,
+  ringInsight: {
+    fontSize: 9,
     fontWeight: '500',
-    color: theme.colors.text.secondary,
-    lineHeight: 14,
+    color: theme.colors.text.muted,
+    textAlign: 'center',
+    lineHeight: 12,
+    paddingHorizontal: 4,
+    marginTop: 2,
   },
 });
 

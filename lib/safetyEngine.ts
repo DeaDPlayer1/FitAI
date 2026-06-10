@@ -48,23 +48,26 @@ const OUT_OF_DOMAIN_PATTERNS: { pattern: RegExp; suggestion: string }[] = [
   { pattern: /(suicide|kill\s*myself|self.harm)/i, suggestion: 'If you are having thoughts of self-harm, please contact a mental health crisis service immediately.' },
 ];
 
+const MAX_INPUT_LENGTH = 2000;
+
 // ─── Input sanitization — detect prompt injection ───
+// NOTE: All patterns use single ` ` (space) not `\s+` to avoid ReDoS.
 const INJECTION_PATTERNS: RegExp[] = [
-  /ignore\s+(all\s+)?(previous|above|below)\s+(instructions|prompts?|commands?)/i,
-  /forget\s+(all\s+)?(previous|above|below)/i,
-  /you\s+are\s+(now|not)\s+(a\s+)?(free|unbound|unrestricted|DAN|jailbroken)/i,
-  /system\s*(prompt|message|instruction)\s*:?\s*override/i,
-  /new\s*(instructions|prompt|role|directive)\s*:?/i,
-  /output\s+(in\s+)?base64|base64\s*(decode|encode)/i,
+  /ignore (all )?(previous|above|below) (instructions|prompts?|commands?)/i,
+  /forget (all )?(previous|above|below)/i,
+  /you are (now|not) (a )?(free|unbound|unrestricted|DAN|jailbroken)/i,
+  /system (prompt|message|instruction):? override/i,
+  /new (instructions|prompt|role|directive):?/i,
+  /output (in )?base64|base64 (decode|encode)/i,
   /DAN|do.anything.now|jailbreak|prompt.injection/i,
-  /role.play|pretend\s+(to\s+)?be|act\s+as\s+if/i,
-  /translate.*to.*ignore|ignore.*translat/i,
-  /you\s+will\s+now\s+follow|you\s+must\s+now\s+obey/i,
-  /override\s+(mode|protocol|constraints|safety|filter)/i,
-  /morals\s*:?\s*off|ethics\s*:?\s*bypass|no\s+(rules|limits|boundaries|restrictions)/i,
-  /respond\s+in\s+a\s+language\s+other|use\s+leet|coded\s+message/i,
-  /hypothetical.*(no|without)\s*(restrictions|limits|rules)/i,
-  /fiction(al)?\s*(character|scenario|setting).*ignore/i,
+  /role.play|pretend (to )?be|act as if/i,
+  /translate.*ignore|ignore.*translat/i,
+  /you will now follow|you must now obey/i,
+  /override (mode|protocol|constraints|safety|filter)/i,
+  /morals:? off|ethics:? bypass|no (rules|limits|boundaries|restrictions)/i,
+  /respond in a language other|use leet|coded message/i,
+  /hypothetical (no|without) (restrictions|limits|rules)/i,
+  /fiction(al)? (character|scenario|setting).*ignore/i,
 ];
 
 // ─── BMR estimation using Mifflin-St Jeor ───
@@ -80,6 +83,17 @@ function estimateBMR(weightKg: number, age: number, isMale: boolean): number {
  */
 function stepInputSanitization(input: string): SafetyWarning[] {
   const warnings: SafetyWarning[] = [];
+  if (input.length > MAX_INPUT_LENGTH) {
+    warnings.push({
+      ruleId: 'input_too_long',
+      domain: 'general',
+      message: `Input exceeds maximum length of ${MAX_INPUT_LENGTH} characters.`,
+      severity: 'critical',
+      action: 'block',
+      userExplanation: `Your input is too long. Please keep it under ${MAX_INPUT_LENGTH} characters.`,
+    });
+    return warnings;
+  }
   for (const pattern of INJECTION_PATTERNS) {
     if (pattern.test(input)) {
       warnings.push({

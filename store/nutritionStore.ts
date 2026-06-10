@@ -177,6 +177,7 @@ useNutritionStore.subscribe((state) => {
       todayFoodLogs: state.todayFoodLogs,
       calorieGoal: state.calorieGoal,
       mealTypes: state.mealTypes,
+      _cachedDate: new Date().toDateString(),
     })).catch(() => {});
   }, 500);
 });
@@ -187,6 +188,13 @@ export async function hydrateNutritionCache(): Promise<void> {
     const data = await AsyncStorage.getItem(NUTRITION_CACHE_KEY);
     if (data) {
       const parsed = JSON.parse(data);
+      const todayStr = new Date().toDateString();
+      const cachedDate = parsed._cachedDate;
+      if (cachedDate !== todayStr) {
+        await AsyncStorage.removeItem(NUTRITION_CACHE_KEY);
+        useNutritionStore.setState({ todayFoodLogs: [], calorieGoal: parsed.calorieGoal ?? 1800, mealTypes: parsed.mealTypes || [] });
+        return;
+      }
       useNutritionStore.setState({
         todayFoodLogs: parsed.todayFoodLogs || [],
         calorieGoal: parsed.calorieGoal ?? 1800,

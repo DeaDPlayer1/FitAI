@@ -54,7 +54,7 @@ function PulseArc() {
 export function EnergyRingCard({ consumed, remaining, progress, stats }: EnergyRingCardProps) {
   return (
     <LinearGradient
-      colors={['#FFFFFF', '#F8F7FF']}
+      colors={['#FFFFFF', '#FFFFFF']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.card}
@@ -99,11 +99,11 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     borderRadius: theme.radius.xl,
-    padding: 18,
+    padding: 22,
     marginHorizontal: 20,
-    marginTop: -32,
-    ...theme.shadow.float,
+    marginTop: -12,
     gap: 16,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2,
   },
   ringSection: {
     alignItems: 'center',

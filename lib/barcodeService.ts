@@ -1,7 +1,10 @@
 import { getDb } from './db';
 import indianBarcodes from '@/assets/indian_barcodes.json';
 
-const USDA_API_KEY = process.env.EXPO_PUBLIC_USDA_API_KEY || 'DEMO_KEY';
+function getUsdaApiKey(): string | null {
+  const key = process.env.EXPO_PUBLIC_USDA_API_KEY || process.env.USDA_API_KEY;
+  return key?.trim() || null;
+}
 let bundledSeeded = false;
 
 // ── Rate limiter for Open Food Facts ──
@@ -270,9 +273,12 @@ async function tryOpenFoodFacts(barcode: string): Promise<FoodProduct | null> {
 }
 
 async function tryUsda(barcode: string): Promise<FoodProduct | null> {
+  const usdaKey = getUsdaApiKey();
+  if (!usdaKey) return null;
+
   console.log('[barcode] Querying USDA FoodData Central:', barcode);
   try {
-    const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${USDA_API_KEY}&query=${encodeURIComponent(barcode)}&dataType=Branded&pageSize=1`;
+    const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${usdaKey}&query=${encodeURIComponent(barcode)}&dataType=Branded&pageSize=1`;
     const response = await fetch(url);
     if (!response.ok) return null;
 

@@ -1,0 +1,133 @@
+[
+  {
+    "chain": "McDonald's",
+    "chain_region": "India",
+    "items": [
+      { "item_name": "McAloo Tikki Burger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 142, "calories": 338, "protein": 10, "carbs": 46, "fat": 13, "fiber": 2, "sugar": 4, "sodium": 680, "is_veg": 1, "aliases": ["mcaloo tikki", "aloo tikki burger"] },
+      { "item_name": "McAloo Tikki Burger (Double)", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 200, "calories": 462, "protein": 15, "carbs": 58, "fat": 19, "fiber": 3, "sugar": 5, "sodium": 890, "is_veg": 1, "aliases": ["double mcaloo", "mcaloo double"] },
+      { "item_name": "McVeggie Burger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 160, "calories": 381, "protein": 12, "carbs": 48, "fat": 15, "fiber": 3, "sugar": 5, "sodium": 720, "is_veg": 1, "aliases": ["mcveggie", "veg burger mcdonalds"] },
+      { "item_name": "Chicken Maharaja Mac", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 237, "calories": 560, "protein": 30, "carbs": 46, "fat": 27, "fiber": 2, "sugar": 7, "sodium": 1040, "is_veg": 0, "aliases": ["maharaja mac", "chicken mac"] },
+      { "item_name": "McChicken Burger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 160, "calories": 394, "protein": 17, "carbs": 38, "fat": 19, "fiber": 1, "sugar": 4, "sodium": 760, "is_veg": 0, "aliases": ["mcchicken", "chicken burger mcdonalds"] },
+      { "item_name": "Filet-O-Fish", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 141, "calories": 329, "protein": 15, "carbs": 36, "fat": 14, "fiber": 1, "sugar": 4, "sodium": 620, "is_veg": 0, "aliases": ["filet o fish", "fish burger"] },
+      { "item_name": "McSpicy Paneer Burger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 185, "calories": 488, "protein": 20, "carbs": 50, "fat": 23, "fiber": 3, "sugar": 5, "sodium": 920, "is_veg": 1, "aliases": ["mcspicy paneer", "spicy paneer burger"] },
+      { "item_name": "Veg Pizza McPuff", "category": "Sides", "serving_label": "1 piece", "serving_grams": 80, "calories": 254, "protein": 6, "carbs": 31, "fat": 11, "fiber": 2, "sugar": 2, "sodium": 410, "is_veg": 1, "aliases": ["pizza puff", "mcpuff"] },
+      { "item_name": "Hash Brown", "category": "Sides", "serving_label": "1 piece", "serving_grams": 50, "calories": 133, "protein": 1, "carbs": 14, "fat": 8, "fiber": 1, "sugar": 0, "sodium": 290, "is_veg": 1, "aliases": ["hashbrown", "hash brown"] },
+      { "item_name": "French Fries Small", "category": "Sides", "serving_label": "1 small", "serving_grams": 80, "calories": 221, "protein": 3, "carbs": 29, "fat": 10, "fiber": 2, "sugar": 0, "sodium": 160, "is_veg": 1, "aliases": ["small fries", "fries small"] },
+      { "item_name": "French Fries Medium", "category": "Sides", "serving_label": "1 medium", "serving_grams": 117, "calories": 322, "protein": 4, "carbs": 42, "fat": 15, "fiber": 3, "sugar": 0, "sodium": 230, "is_veg": 1, "aliases": ["medium fries", "fries medium"] },
+      { "item_name": "French Fries Large", "category": "Sides", "serving_label": "1 large", "serving_grams": 170, "calories": 444, "protein": 6, "carbs": 58, "fat": 21, "fiber": 4, "sugar": 0, "sodium": 320, "is_veg": 1, "aliases": ["large fries", "fries large"] },
+      { "item_name": "Piri Piri Fries Small", "category": "Sides", "serving_label": "1 small", "serving_grams": 85, "calories": 235, "protein": 3, "carbs": 30, "fat": 11, "fiber": 2, "sugar": 0, "sodium": 180, "is_veg": 1, "aliases": ["peri peri fries small", "piri piri small"] },
+      { "item_name": "McFlurry Oreo", "category": "Desserts", "serving_label": "1 regular", "serving_grams": 180, "calories": 295, "protein": 6, "carbs": 50, "fat": 8, "fiber": 1, "sugar": 38, "sodium": 140, "is_veg": 1, "aliases": ["oreo mcflurry", "mcflurry"] },
+      { "item_name": "Soft Serve (cone)", "category": "Desserts", "serving_label": "1 cone", "serving_grams": 85, "calories": 115, "protein": 3, "carbs": 20, "fat": 3, "fiber": 0, "sugar": 16, "sodium": 60, "is_veg": 1, "aliases": ["soft serve", "ice cream cone", "softy"] },
+      { "item_name": "Coke 300ml", "category": "Drinks", "serving_label": "1 glass 300ml", "serving_grams": 300, "calories": 126, "protein": 0, "carbs": 32, "fat": 0, "fiber": 0, "sugar": 32, "sodium": 15, "is_veg": 1, "aliases": ["coke", "coca cola", "cola"] },
+      { "item_name": "McCafe Cappuccino", "category": "Drinks", "serving_label": "1 cup", "serving_grams": 250, "calories": 120, "protein": 5, "carbs": 14, "fat": 5, "fiber": 0, "sugar": 10, "sodium": 70, "is_veg": 1, "aliases": ["cappuccino mccafe", "mccafe coffee"] },
+      { "item_name": "Sausage Egg McMuffin", "category": "Breakfast", "serving_label": "1 muffin", "serving_grams": 160, "calories": 366, "protein": 22, "carbs": 30, "fat": 17, "fiber": 1, "sugar": 3, "sodium": 820, "is_veg": 0, "aliases": ["sausage mcmuffin", "sausage egg muffin"] },
+      { "item_name": "Egg McMuffin", "category": "Breakfast", "serving_label": "1 muffin", "serving_grams": 145, "calories": 290, "protein": 17, "carbs": 29, "fat": 12, "fiber": 1, "sugar": 2, "sodium": 740, "is_veg": 0, "aliases": ["egg mcmuffin", "mcmuffin"] },
+      { "item_name": "Hot Cakes with Syrup", "category": "Breakfast", "serving_label": "1 plate", "serving_grams": 142, "calories": 372, "protein": 7, "carbs": 63, "fat": 10, "fiber": 1, "sugar": 28, "sodium": 580, "is_veg": 1, "aliases": ["hotcakes", "hot cakes", "pancakes"] }
+    ]
+  },
+  {
+    "chain": "KFC",
+    "chain_region": "India",
+    "items": [
+      { "item_name": "Chicken Zinger Burger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 218, "calories": 583, "protein": 29, "carbs": 56, "fat": 26, "fiber": 2, "sugar": 5, "sodium": 1150, "is_veg": 0, "aliases": ["zinger burger", "zinger", "chicken zinger"] },
+      { "item_name": "Veg Zinger Burger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 190, "calories": 420, "protein": 11, "carbs": 55, "fat": 16, "fiber": 3, "sugar": 4, "sodium": 920, "is_veg": 1, "aliases": ["veg zinger", "veggie zinger"] },
+      { "item_name": "Paneer Zinger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 200, "calories": 450, "protein": 19, "carbs": 48, "fat": 20, "fiber": 2, "sugar": 4, "sodium": 980, "is_veg": 1, "aliases": ["paneer zinger", "zinger paneer"] },
+      { "item_name": "Chicken Strips (2pc)", "category": "Chicken", "serving_label": "2 pieces", "serving_grams": 100, "calories": 230, "protein": 17, "carbs": 13, "fat": 12, "fiber": 0, "sugar": 1, "sodium": 540, "is_veg": 0, "aliases": ["chicken strips", "2 strips"] },
+      { "item_name": "Chicken Strips (3pc)", "category": "Chicken", "serving_label": "3 pieces", "serving_grams": 150, "calories": 345, "protein": 26, "carbs": 20, "fat": 18, "fiber": 1, "sugar": 1, "sodium": 810, "is_veg": 0, "aliases": ["3 strips", "three strips"] },
+      { "item_name": "Hot Wings (6pc)", "category": "Chicken", "serving_label": "6 pieces", "serving_grams": 180, "calories": 380, "protein": 24, "carbs": 22, "fat": 21, "fiber": 1, "sugar": 2, "sodium": 1260, "is_veg": 0, "aliases": ["hot wings", "spicy wings", "6 wings"] },
+      { "item_name": "Popcorn Chicken Regular", "category": "Chicken", "serving_label": "1 regular box", "serving_grams": 130, "calories": 318, "protein": 20, "carbs": 25, "fat": 14, "fiber": 1, "sugar": 1, "sodium": 780, "is_veg": 0, "aliases": ["popcorn chicken", "popcorn reg"] },
+      { "item_name": "Popcorn Chicken Large", "category": "Chicken", "serving_label": "1 large box", "serving_grams": 195, "calories": 477, "protein": 30, "carbs": 38, "fat": 21, "fiber": 2, "sugar": 2, "sodium": 1170, "is_veg": 0, "aliases": ["popcorn large", "large popcorn"] },
+      { "item_name": "Coleslaw Regular", "category": "Sides", "serving_label": "1 regular", "serving_grams": 120, "calories": 144, "protein": 1, "carbs": 14, "fat": 9, "fiber": 2, "sugar": 10, "sodium": 200, "is_veg": 1, "aliases": ["coleslaw", "kfc coleslaw", "slaw"] },
+      { "item_name": "Coleslaw Large", "category": "Sides", "serving_label": "1 large", "serving_grams": 180, "calories": 216, "protein": 2, "carbs": 21, "fat": 14, "fiber": 3, "sugar": 15, "sodium": 300, "is_veg": 1, "aliases": ["coleslaw large", "large coleslaw"] },
+      { "item_name": "Mashed Potato", "category": "Sides", "serving_label": "1 regular", "serving_grams": 120, "calories": 112, "protein": 2, "carbs": 17, "fat": 4, "fiber": 1, "sugar": 1, "sodium": 380, "is_veg": 1, "aliases": ["mashed potato", "mashed potatoes"] },
+      { "item_name": "Regular Fries", "category": "Sides", "serving_label": "1 regular", "serving_grams": 100, "calories": 290, "protein": 4, "carbs": 37, "fat": 14, "fiber": 3, "sugar": 0, "sodium": 250, "is_veg": 1, "aliases": ["fries", "french fries kfc", "kfc fries"] },
+      { "item_name": "Large Fries", "category": "Sides", "serving_label": "1 large", "serving_grams": 150, "calories": 395, "protein": 5, "carbs": 50, "fat": 19, "fiber": 4, "sugar": 0, "sodium": 340, "is_veg": 1, "aliases": ["large fries kfc", "kfc large fries"] },
+      { "item_name": "Pepsi 450ml", "category": "Drinks", "serving_label": "1 glass", "serving_grams": 450, "calories": 189, "protein": 0, "carbs": 47, "fat": 0, "fiber": 0, "sugar": 47, "sodium": 20, "is_veg": 1, "aliases": ["pepsi", "pepsi kfc"] },
+      { "item_name": "Krushers Chocolate", "category": "Drinks", "serving_label": "1 cup", "serving_grams": 300, "calories": 380, "protein": 6, "carbs": 60, "fat": 12, "fiber": 1, "sugar": 45, "sodium": 120, "is_veg": 1, "aliases": ["krushers", "chocolate krusher", "kfc krushers"] }
+    ]
+  },
+  {
+    "chain": "Domino's",
+    "chain_region": "India",
+    "items": [
+      { "item_name": "Margherita Regular (per slice)", "category": "Pizza", "serving_label": "1 slice regular", "serving_grams": 80, "calories": 170, "protein": 7, "carbs": 22, "fat": 6, "fiber": 1, "sugar": 2, "sodium": 340, "is_veg": 1, "aliases": ["margherita slice", "margherita regular"] },
+      { "item_name": "Margherita Medium (per slice)", "category": "Pizza", "serving_label": "1 slice medium", "serving_grams": 100, "calories": 220, "protein": 9, "carbs": 29, "fat": 8, "fiber": 1, "sugar": 2, "sodium": 420, "is_veg": 1, "aliases": ["margherita medium slice"] },
+      { "item_name": "Peppy Paneer Regular (per slice)", "category": "Pizza", "serving_label": "1 slice regular", "serving_grams": 90, "calories": 200, "protein": 9, "carbs": 23, "fat": 8, "fiber": 1, "sugar": 2, "sodium": 380, "is_veg": 1, "aliases": ["peppy paneer slice", "peppy paneer regular"] },
+      { "item_name": "Peppy Paneer Large (per slice)", "category": "Pizza", "serving_label": "1 slice large", "serving_grams": 140, "calories": 310, "protein": 13, "carbs": 36, "fat": 12, "fiber": 2, "sugar": 3, "sodium": 560, "is_veg": 1, "aliases": ["peppy paneer large slice"] },
+      { "item_name": "Farmhouse Regular (per slice)", "category": "Pizza", "serving_label": "1 slice regular", "serving_grams": 90, "calories": 195, "protein": 8, "carbs": 24, "fat": 7, "fiber": 1, "sugar": 2, "sodium": 360, "is_veg": 1, "aliases": ["farmhouse slice", "farmhouse regular"] },
+      { "item_name": "Non Veg Supreme Regular (per slice)", "category": "Pizza", "serving_label": "1 slice regular", "serving_grams": 100, "calories": 220, "protein": 11, "carbs": 22, "fat": 9, "fiber": 1, "sugar": 2, "sodium": 440, "is_veg": 0, "aliases": ["non veg supreme slice", "non veg supreme"] },
+      { "item_name": "Chicken Dominator Regular (per slice)", "category": "Pizza", "serving_label": "1 slice regular", "serving_grams": 105, "calories": 235, "protein": 13, "carbs": 21, "fat": 10, "fiber": 1, "sugar": 2, "sodium": 460, "is_veg": 0, "aliases": ["chicken dominator slice", "dominator"] },
+      { "item_name": "Garlic Bread (4pc)", "category": "Sides", "serving_label": "4 pieces", "serving_grams": 120, "calories": 280, "protein": 6, "carbs": 40, "fat": 10, "fiber": 2, "sugar": 2, "sodium": 520, "is_veg": 1, "aliases": ["garlic bread", "dominos garlic bread"] },
+      { "item_name": "Garlic Bread Stix (8pc)", "category": "Sides", "serving_label": "8 sticks", "serving_grams": 160, "calories": 370, "protein": 8, "carbs": 52, "fat": 14, "fiber": 2, "sugar": 2, "sodium": 680, "is_veg": 1, "aliases": ["garlic bread stix", "bread stix", "stix"] },
+      { "item_name": "Stuffed Garlic Bread", "category": "Sides", "serving_label": "1 piece", "serving_grams": 200, "calories": 460, "protein": 14, "carbs": 55, "fat": 20, "fiber": 2, "sugar": 3, "sodium": 810, "is_veg": 1, "aliases": ["stuffed garlic bread", "cheese garlic bread"] },
+      { "item_name": "Chicken Wings (8pc)", "category": "Sides", "serving_label": "8 pieces", "serving_grams": 250, "calories": 440, "protein": 32, "carbs": 18, "fat": 26, "fiber": 1, "sugar": 2, "sodium": 1100, "is_veg": 0, "aliases": ["chicken wings", "dominos wings", "8 wings"] },
+      { "item_name": "Choco Lava Cake", "category": "Desserts", "serving_label": "1 piece", "serving_grams": 80, "calories": 280, "protein": 4, "carbs": 40, "fat": 11, "fiber": 1, "sugar": 28, "sodium": 150, "is_veg": 1, "aliases": ["choco lava cake", "lava cake", "chocolate lava"] }
+    ]
+  },
+  {
+    "chain": "Burger King",
+    "chain_region": "India",
+    "items": [
+      { "item_name": "Whopper", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 270, "calories": 657, "protein": 30, "carbs": 50, "fat": 38, "fiber": 3, "sugar": 8, "sodium": 980, "is_veg": 0, "aliases": ["whopper", "whopper burger"] },
+      { "item_name": "Veg Whopper", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 250, "calories": 510, "protein": 16, "carbs": 60, "fat": 22, "fiber": 4, "sugar": 7, "sodium": 820, "is_veg": 1, "aliases": ["veg whopper", "whopper veg"] },
+      { "item_name": "Crispy Veg Burger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 170, "calories": 370, "protein": 10, "carbs": 48, "fat": 16, "fiber": 2, "sugar": 4, "sodium": 690, "is_veg": 1, "aliases": ["crispy veg", "veg crispy"] },
+      { "item_name": "Crispy Chicken Burger", "category": "Burgers", "serving_label": "1 burger", "serving_grams": 190, "calories": 430, "protein": 18, "carbs": 46, "fat": 19, "fiber": 1, "sugar": 4, "sodium": 750, "is_veg": 0, "aliases": ["crispy chicken", "chicken crispy"] },
+      { "item_name": "Chicken Fries (9pc)", "category": "Sides", "serving_label": "9 pieces", "serving_grams": 120, "calories": 320, "protein": 19, "carbs": 28, "fat": 13, "fiber": 1, "sugar": 1, "sodium": 680, "is_veg": 0, "aliases": ["chicken fries", "bk chicken fries", "9 chicken fries"] },
+      { "item_name": "King Fries Medium", "category": "Sides", "serving_label": "1 medium", "serving_grams": 130, "calories": 340, "protein": 4, "carbs": 44, "fat": 16, "fiber": 3, "sugar": 0, "sodium": 280, "is_veg": 1, "aliases": ["king fries", "bk fries medium", "fries burger king"] },
+      { "item_name": "Onion Rings", "category": "Sides", "serving_label": "1 regular", "serving_grams": 110, "calories": 260, "protein": 3, "carbs": 34, "fat": 12, "fiber": 2, "sugar": 5, "sodium": 450, "is_veg": 1, "aliases": ["onion rings bk", "bk onion rings"] },
+      { "item_name": "Chocolate Sundae", "category": "Desserts", "serving_label": "1 cup", "serving_grams": 140, "calories": 220, "protein": 4, "carbs": 38, "fat": 6, "fiber": 0, "sugar": 30, "sodium": 100, "is_veg": 1, "aliases": ["chocolate sundae bk", "bk sundae"] }
+    ]
+  },
+  {
+    "chain": "Subway",
+    "chain_region": "India",
+    "items": [
+      { "item_name": "6-inch Veggie Delite (wheat)", "category": "Subs", "serving_label": "1 6-inch sub", "serving_grams": 200, "calories": 200, "protein": 9, "carbs": 38, "fat": 2, "fiber": 5, "sugar": 5, "sodium": 380, "is_veg": 1, "aliases": ["veggie delite", "veggie delight", "6 veggie"] },
+      { "item_name": "6-inch Chicken Tikka (wheat)", "category": "Subs", "serving_label": "1 6-inch sub", "serving_grams": 230, "calories": 310, "protein": 24, "carbs": 40, "fat": 5, "fiber": 4, "sugar": 5, "sodium": 680, "is_veg": 0, "aliases": ["chicken tikka subway", "6 chicken tikka", "tikka sub"] },
+      { "item_name": "6-inch Paneer Tikka (wheat)", "category": "Subs", "serving_label": "1 6-inch sub", "serving_grams": 220, "calories": 340, "protein": 18, "carbs": 40, "fat": 11, "fiber": 4, "sugar": 5, "sodium": 620, "is_veg": 1, "aliases": ["paneer tikka subway", "6 paneer tikka"] },
+      { "item_name": "6-inch Tuna (wheat)", "category": "Subs", "serving_label": "1 6-inch sub", "serving_grams": 220, "calories": 350, "protein": 22, "carbs": 38, "fat": 10, "fiber": 3, "sugar": 4, "sodium": 550, "is_veg": 0, "aliases": ["tuna subway", "6 tuna", "tuna sub"] },
+      { "item_name": "Footlong Veggie Delite (wheat)", "category": "Subs", "serving_label": "1 footlong", "serving_grams": 400, "calories": 400, "protein": 18, "carbs": 76, "fat": 4, "fiber": 10, "sugar": 10, "sodium": 760, "is_veg": 1, "aliases": ["footlong veggie", "veggie footlong", "ft veggie"] },
+      { "item_name": "Footlong Chicken Tikka (wheat)", "category": "Subs", "serving_label": "1 footlong", "serving_grams": 460, "calories": 620, "protein": 48, "carbs": 80, "fat": 10, "fiber": 8, "sugar": 10, "sodium": 1360, "is_veg": 0, "aliases": ["chicken tikka footlong", "ft chicken tikka"] },
+      { "item_name": "Veggie Patty 6-inch", "category": "Subs", "serving_label": "1 6-inch sub", "serving_grams": 220, "calories": 330, "protein": 13, "carbs": 42, "fat": 10, "fiber": 5, "sugar": 5, "sodium": 580, "is_veg": 1, "aliases": ["veggie patty", "patty sub"] },
+      { "item_name": "Cookies (chocolate chip)", "category": "Sides", "serving_label": "1 cookie", "serving_grams": 45, "calories": 220, "protein": 2, "carbs": 30, "fat": 10, "fiber": 1, "sugar": 18, "sodium": 120, "is_veg": 1, "aliases": ["chocolate chip cookie", "subway cookie", "cookies"] }
+    ]
+  },
+  {
+    "chain": "Pizza Hut",
+    "chain_region": "India",
+    "items": [
+      { "item_name": "Margherita Medium (per slice)", "category": "Pizza", "serving_label": "1 slice medium", "serving_grams": 100, "calories": 190, "protein": 8, "carbs": 25, "fat": 7, "fiber": 1, "sugar": 2, "sodium": 360, "is_veg": 1, "aliases": ["pizza hut margherita", "ph margherita"] },
+      { "item_name": "BBQ Chicken Medium (per slice)", "category": "Pizza", "serving_label": "1 slice medium", "serving_grams": 110, "calories": 230, "protein": 12, "carbs": 26, "fat": 8, "fiber": 1, "sugar": 3, "sodium": 470, "is_veg": 0, "aliases": ["bbq chicken pizza hut", "ph bbq chicken"] },
+      { "item_name": "Paneer Makhani Medium (per slice)", "category": "Pizza", "serving_label": "1 slice medium", "serving_grams": 105, "calories": 215, "protein": 9, "carbs": 24, "fat": 9, "fiber": 1, "sugar": 2, "sodium": 400, "is_veg": 1, "aliases": ["paneer makhani pizza hut", "ph paneer makhani"] },
+      { "item_name": "Stuffed Crust Cheese Medium (per slice)", "category": "Pizza", "serving_label": "1 slice medium", "serving_grams": 130, "calories": 280, "protein": 12, "carbs": 30, "fat": 13, "fiber": 1, "sugar": 2, "sodium": 520, "is_veg": 1, "aliases": ["stuffed crust cheese", "cheese stuffed crust"] },
+      { "item_name": "Garlic Bread", "category": "Sides", "serving_label": "1 piece", "serving_grams": 100, "calories": 240, "protein": 6, "carbs": 34, "fat": 9, "fiber": 2, "sugar": 2, "sodium": 440, "is_veg": 1, "aliases": ["pizza hut garlic bread", "ph garlic bread"] },
+      { "item_name": "Pasta Arabiatta", "category": "Sides", "serving_label": "1 plate", "serving_grams": 280, "calories": 380, "protein": 12, "carbs": 58, "fat": 9, "fiber": 5, "sugar": 6, "sodium": 620, "is_veg": 1, "aliases": ["arabiatta pasta", "pasta arrabiata"] },
+      { "item_name": "Choco Mousse Cake", "category": "Desserts", "serving_label": "1 slice", "serving_grams": 90, "calories": 310, "protein": 5, "carbs": 42, "fat": 13, "fiber": 1, "sugar": 30, "sodium": 130, "is_veg": 1, "aliases": ["choco mousse", "chocolate mousse cake"] }
+    ]
+  },
+  {
+    "chain": "Starbucks",
+    "chain_region": "India",
+    "items": [
+      { "item_name": "Caffè Latte Tall (whole milk)", "category": "Coffee", "serving_label": "1 tall (12oz)", "serving_grams": 354, "calories": 150, "protein": 8, "carbs": 15, "fat": 6, "fiber": 0, "sugar": 12, "sodium": 100, "is_veg": 1, "aliases": ["caffe latte", "latte tall", "starbucks latte"] },
+      { "item_name": "Cappuccino Tall", "category": "Coffee", "serving_label": "1 tall (12oz)", "serving_grams": 354, "calories": 90, "protein": 6, "carbs": 9, "fat": 3, "fiber": 0, "sugar": 7, "sodium": 75, "is_veg": 1, "aliases": ["cappuccino tall", "starbucks cappuccino"] },
+      { "item_name": "Caramel Macchiato Tall", "category": "Coffee", "serving_label": "1 tall (12oz)", "serving_grams": 354, "calories": 190, "protein": 7, "carbs": 30, "fat": 5, "fiber": 0, "sugar": 28, "sodium": 110, "is_veg": 1, "aliases": ["caramel macchiato", "macchiato tall"] },
+      { "item_name": "Chocolate Frappuccino Tall", "category": "Coffee", "serving_label": "1 tall (12oz)", "serving_grams": 354, "calories": 310, "protein": 5, "carbs": 54, "fat": 8, "fiber": 1, "sugar": 46, "sodium": 160, "is_veg": 1, "aliases": ["chocolate frappuccino", "frappuccino tall"] },
+      { "item_name": "Spinach Feta Wrap", "category": "Food", "serving_label": "1 wrap", "serving_grams": 200, "calories": 290, "protein": 19, "carbs": 33, "fat": 8, "fiber": 4, "sugar": 3, "sodium": 680, "is_veg": 1, "aliases": ["spinach feta wrap", "feta wrap"] },
+      { "item_name": "Chicken & Mushroom Quiche", "category": "Food", "serving_label": "1 piece", "serving_grams": 160, "calories": 380, "protein": 18, "carbs": 28, "fat": 22, "fiber": 1, "sugar": 3, "sodium": 520, "is_veg": 0, "aliases": ["chicken mushroom quiche", "quiche"] },
+      { "item_name": "Croissant (plain)", "category": "Food", "serving_label": "1 croissant", "serving_grams": 80, "calories": 290, "protein": 5, "carbs": 33, "fat": 16, "fiber": 1, "sugar": 5, "sodium": 230, "is_veg": 1, "aliases": ["plain croissant", "butter croissant"] },
+      { "item_name": "Banana Walnut Loaf", "category": "Food", "serving_label": "1 slice", "serving_grams": 110, "calories": 340, "protein": 5, "carbs": 49, "fat": 14, "fiber": 3, "sugar": 28, "sodium": 200, "is_veg": 1, "aliases": ["banana walnut", "banana loaf"] }
+    ]
+  },
+  {
+    "chain": "Haldiram's",
+    "chain_region": "India",
+    "items": [
+      { "item_name": "Aloo Bhujia", "category": "Snacks", "serving_label": "100g pack", "serving_grams": 100, "calories": 550, "protein": 8, "carbs": 56, "fat": 33, "fiber": 3, "sugar": 2, "sodium": 580, "is_veg": 1, "aliases": ["aloo bhujia haldiram", "bhujia"] },
+      { "item_name": "Moong Dal", "category": "Snacks", "serving_label": "100g pack", "serving_grams": 100, "calories": 520, "protein": 22, "carbs": 58, "fat": 24, "fiber": 4, "sugar": 2, "sodium": 520, "is_veg": 1, "aliases": ["moong dal haldiram", "moong dal snack"] },
+      { "item_name": "Mixture", "category": "Snacks", "serving_label": "100g pack", "serving_grams": 100, "calories": 510, "protein": 11, "carbs": 54, "fat": 30, "fiber": 3, "sugar": 2, "sodium": 640, "is_veg": 1, "aliases": ["haldiram mixture", "namkeen mixture"] },
+      { "item_name": "Soan Papdi", "category": "Snacks", "serving_label": "100g", "serving_grams": 100, "calories": 440, "protein": 7, "carbs": 68, "fat": 16, "fiber": 1, "sugar": 45, "sodium": 80, "is_veg": 1, "aliases": ["soan papdi", "soanpapdi"] },
+      { "item_name": "Rasgulla (2pc)", "category": "Snacks", "serving_label": "2 pieces", "serving_grams": 120, "calories": 170, "protein": 4, "carbs": 36, "fat": 1, "fiber": 0, "sugar": 28, "sodium": 30, "is_veg": 1, "aliases": ["rasgulla", "rasgullas"] }
+    ]
+  }
+]

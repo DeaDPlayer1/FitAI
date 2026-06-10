@@ -78,7 +78,8 @@ export default function WorkoutFocusCard({
   });
 
   return (
-    <Animated.View entering={FadeInDown.delay(100).springify().damping(16)} style={[st.card, cardFloat]}>
+    <Animated.View entering={FadeInDown.delay(100).springify().damping(16)}>
+      <Animated.View style={[st.card, cardFloat]}>
       <LinearGradient colors={['rgba(106,73,250,0.03)', theme.colors.bg.secondary]} style={st.cardBg}>
         <View style={st.glowEdge} />
 
@@ -153,6 +154,7 @@ export default function WorkoutFocusCard({
           )}
         </View>
       </LinearGradient>
+      </Animated.View>
     </Animated.View>
   );
 }

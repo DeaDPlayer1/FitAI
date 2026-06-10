@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator,
   Alert, Linking, Animated, TextInput, Keyboard,
@@ -6,10 +6,27 @@ import {
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { theme } from '@/constants/theme';
 import { lookupBarcode, getScanHistory } from '@/lib/barcodeService';
 
+const ALL_BARCODE_TYPES: string[] = [
+  'ean13', 'ean8', 'upc_a', 'upc_e',
+  'code128', 'code39', 'code93', 'codabar',
+  'itf14', 'interleaved2of5',
+  'datamatrix', 'pdf417', 'aztec', 'qr',
+];
+
 type UIState = 'permission' | 'scanning' | 'loading' | 'error' | 'text_search' | 'history';
+
+function normalizeBarcode(raw: string): string {
+  // iOS reports UPC-A as EAN-13 with leading zero
+  if (raw.length === 13 && raw.startsWith('0')) {
+    const stripped = raw.replace(/^0+/, '');
+    if (stripped.length === 12) return stripped;
+  }
+  return raw;
+}
 
 export default function BarcodeScannerScreen() {
   const router = useRouter();
@@ -19,6 +36,22 @@ export default function BarcodeScannerScreen() {
   const [torch, setTorch] = useState(false);
   const [textQuery, setTextQuery] = useState('');
   const [scanHistory, setScanHistory] = useState<any[]>([]);
+  const [manualEntry, setManualEntry] = useState(false);
+  const [manualBarcode, setManualBarcode] = useState('');
+  const [frameFlash, setFrameFlash] = useState<'green' | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 1200);
+  }, []);
+
+  // Manual entry fallback after 10s of no scan
+  useEffect(() => {
+    if (uiState !== 'scanning' || scanned) return;
+    const timer = setTimeout(() => setManualEntry(true), 10000);
+    return () => clearTimeout(timer);
+  }, [uiState, scanned]);
 
   useEffect(() => {
     if (!permission?.granted) {
@@ -60,9 +93,17 @@ export default function BarcodeScannerScreen() {
     if (scanned || uiState === 'loading') return;
     setScanned(true);
     setUIState('loading');
+    setManualEntry(false);
 
     try {
-      const barcode = result.data;
+      const rawBarcode = result.data;
+      const barcode = normalizeBarcode(rawBarcode);
+
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setFrameFlash('green');
+      showToast(`Found barcode: ${barcode}`);
+      setTimeout(() => setFrameFlash(null), 300);
+
       const product = await lookupBarcode(barcode);
 
       if (product) {
@@ -84,6 +125,27 @@ export default function BarcodeScannerScreen() {
       setUIState('scanning');
       setScanned(false);
       Alert.alert('Error', 'Scan failed. Check your connection and try again.');
+    }
+  };
+
+  const handleManualSearch = async () => {
+    const code = manualBarcode.trim();
+    if (!code) return;
+    setUIState('loading');
+    Keyboard.dismiss();
+    try {
+      const product = await lookupBarcode(code);
+      if (product) {
+        navigateToResult(product);
+      } else {
+        Alert.alert('Not Found', `Barcode "${code}" was not found in any database.`);
+        setUIState('scanning');
+        setScanned(false);
+      }
+    } catch {
+      Alert.alert('Error', 'Search failed. Check your connection.');
+      setUIState('scanning');
+      setScanned(false);
     }
   };
 
@@ -238,7 +300,7 @@ export default function BarcodeScannerScreen() {
         style={StyleSheet.absoluteFillObject}
         onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
         barcodeScannerSettings={{
-          barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e'],
+          barcodeTypes: ALL_BARCODE_TYPES as any,
         }}
         enableTorch={torch}
       >
@@ -259,7 +321,7 @@ export default function BarcodeScannerScreen() {
           </View>
 
           <View style={styles.middle}>
-            <View style={styles.scanBox}>
+            <View style={[styles.scanBox, frameFlash === 'green' && { borderColor: '#22C55E' }]}>
               <ScanningLine />
             </View>
             <Text style={styles.hint}>
@@ -267,6 +329,27 @@ export default function BarcodeScannerScreen() {
             </Text>
             {uiState === 'loading' && <ActivityIndicator color="#6C3CE1" style={{ marginTop: 16 }} />}
           </View>
+
+          {manualEntry && uiState === 'scanning' && !scanned && (
+            <View style={styles.manualEntryContainer}>
+              <Text style={{ fontSize: 13, color: '#FFFFFFCC', marginBottom: 6 }}>Can't scan? Enter barcode:</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TextInput
+                  style={styles.manualInput}
+                  placeholder="e.g. 8901234567890"
+                  placeholderTextColor="#FFFFFF66"
+                  value={manualBarcode}
+                  onChangeText={setManualBarcode}
+                  keyboardType="number-pad"
+                  returnKeyType="search"
+                  onSubmitEditing={handleManualSearch}
+                />
+                <TouchableOpacity onPress={handleManualSearch} style={styles.manualSearchBtn}>
+                  <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 14 }}>Search</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
 
           <View style={styles.bottom}>
             <TouchableOpacity onPress={() => setUIState('text_search')} style={styles.textSearchBtn}>
@@ -280,6 +363,12 @@ export default function BarcodeScannerScreen() {
           </View>
         </View>
       </CameraView>
+
+      {toastMsg && (
+        <View style={styles.toast}>
+          <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '600' }}>{toastMsg}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -316,7 +405,7 @@ const styles = StyleSheet.create({
   backBtn: { padding: 8 }, backText: { color: 'white', fontSize: 20 },
   torchBtn: { padding: 8 }, torchText: { fontSize: 20 },
   middle: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  scanBox: { width: 260, height: 260, position: 'relative', overflow: 'hidden' },
+  scanBox: { width: 260, height: 260, position: 'relative', overflow: 'hidden', borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)', borderRadius: 16 },
   hint: { color: 'white', marginTop: 20, fontSize: 14, opacity: 0.9, textAlign: 'center' },
   bottom: {
     paddingBottom: 48, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', paddingTop: 20, gap: 12,
@@ -350,5 +439,24 @@ const styles = StyleSheet.create({
     width: 44, height: 44, borderRadius: 12,
     backgroundColor: theme.colors.background,
     alignItems: 'center', justifyContent: 'center',
+  },
+  manualEntryContainer: {
+    position: 'absolute', bottom: 170, left: 20, right: 20,
+    backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 14,
+    padding: 14,
+  },
+  manualInput: {
+    flex: 1, backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10,
+    color: '#FFFFFF', fontSize: 16, fontWeight: '500',
+  },
+  manualSearchBtn: {
+    backgroundColor: '#6C3CE1', borderRadius: 10,
+    paddingHorizontal: 18, justifyContent: 'center',
+  },
+  toast: {
+    position: 'absolute', bottom: 120, left: 40, right: 40,
+    backgroundColor: '#1A1A2ECC', borderRadius: 12,
+    paddingVertical: 12, paddingHorizontal: 20, alignItems: 'center',
   },
 });
